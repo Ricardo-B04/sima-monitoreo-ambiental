@@ -17,3 +17,4 @@ informes/build/
 *.synctex.gz
 *.toc
 .DS_Store
+.posit/assistant
