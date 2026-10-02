@@ -18,3 +18,5 @@ informes/build/
 *.toc
 .DS_Store
 .posit/assistant
+informes/*_cache/
+informes/*_files/

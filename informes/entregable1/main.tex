@@ -1,0 +1,381 @@
+\documentclass[11pt,letterpaper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla]{babel}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{eso-pic}
+\usepackage{titlesec}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+\setlength{\parskip}{3pt}
+\setlength{\parindent}{0pt}
+\titlespacing*{\section}{0pt}{9pt}{3pt}
+\titlespacing*{\subsection}{0pt}{6pt}{2pt}
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+% Marcador visible para lo que el equipo debe completar o verificar
+\newcommand{\pend}[1]{\textcolor{red}{[\textbf{COMPLETAR:} #1]}}
+\newcommand{\ugm}{$\mu$g/m$^{3}$}
+
+\begin{document}
+
+\begin{titlepage}
+\AddToShipoutPictureBG*{%
+  \put(-364,-565){\includegraphics[width=707pt]{img/tec_watermark.png}}%
+}
+\centering
+\vspace*{1.2cm}
+\includegraphics[width=6.6cm]{img/tec_logo.png}
+
+\vspace{4.2cm}
+{\Large\bfseries Datos en el Aire: An\'alisis Multivariado de la Calidad del Aire en la Zona Metropolitana de Monterrey\par}
+\vspace{0.3cm}
+{\large Entregable 1, Etapa 1: Conociendo el negocio y comprensi\'on y preparaci\'on de los datos\par}
+
+\vspace{2.2cm}
+Miembros\\
+Equipo 3\\[4pt]
+Ricardo Ballesteros Amavizca \hfill A01255358\\
+Landon Mauricio Trevi\~no Ortiz \hfill A01199312\\
+Josu\'e Olvera Zozaya \hfill A00842044\\[4pt]
+Repositorio: \url{https://github.com/Ricardo-B04/sima-monitoreo-ambiental}
+
+\vfill
+Profesores: Blanca Rosa Ruiz Hern\'andez y Jes\'us Armenta Segura\\
+Tecnol\'ogico de Monterrey -- Campus Monterrey\\
+\today
+\vspace*{1cm}
+\end{titlepage}
+
+%-------------------------------------------------------------
+\section{Introducci\'on}
+
+\subsection{Por qu\'e importa la calidad del aire}
+La contaminaci\'on atmosf\'erica es un problema de salud p\'ublica y no solo ambiental. La Organizaci\'on Mundial de la Salud (OMS) actualiz\'o en 2021 sus gu\'ias globales tras una revisi\'on sistem\'atica de la evidencia y estim\'o que cerca de 80\,\% de las muertes prematuras atribuidas a las PM$_{2.5}$ podr\'ian evitarse si los pa\'ises alcanzaran los niveles anuales recomendados \cite{who2021,kapsarc}. Aun as\'i, solo 10\,\% de los asentamientos evaluados por la OMS ten\'ia niveles anuales de PM$_{2.5}$ o PM$_{10}$ alineados con esas gu\'ias \cite{whoreviews}. En M\'exico, la evaluaci\'on oficial reconoci\'o que, de las 140 estaciones que med\'ian PM$_{10}$, solo 87 generaron informaci\'on suficiente para evaluar la norma y de ellas \'unicamente 8 cumplieron los valores l\'imite \cite{nom025}.
+
+La dimensi\'on social es igual de relevante. Un ensayo reciente sobre salud p\'ublica ambiental sostiene que los riesgos ambientales, entre ellos la contaminaci\'on del aire, deben evaluarse combinando m\'etodos cuantitativos y cualitativos, porque factores socioculturales como la educaci\'on, la experiencia previa y la confianza en las instituciones condicionan c\'omo la poblaci\'on percibe el riesgo y si adopta conductas preventivas \cite{sanchez2026}. Medir bien es, por tanto, una condici\'on para que la ciudadan\'ia conf\'ie en la informaci\'on y participe en las decisiones.
+
+\subsection{Contaminantes, variables y su medici\'on}
+Las gu\'ias de la OMS cubren seis contaminantes: PM$_{2.5}$, PM$_{10}$, ozono (O$_3$), di\'oxido de nitr\'ogeno (NO$_2$), di\'oxido de azufre (SO$_2$) y mon\'oxido de carbono (CO) \cite{who2021}. En el caso de Monterrey, los estudios locales coinciden en que los problemas principales son PM$_{10}$, O$_3$ y PM$_{2.5}$, que son los que acumulan m\'as d\'ias fuera de norma y una tendencia creciente en las \'ultimas dos d\'ecadas, mientras que CO, NO$_2$ y SO$_2$ se mantienen dentro de norma \cite{fajardo2023}. Esta red mide adem\'as variables meteorol\'ogicas (temperatura, humedad relativa, radiaci\'on solar, presi\'on barom\'etrica, velocidad y direcci\'on del viento y lluvia) \cite{sima_ranges}, que son indispensables porque la formaci\'on y dispersi\'on de los contaminantes depende de ellas.
+
+\subsection{Normas y su problem\'atica}
+M\'exico regula las part\'iculas con la NOM-025-SSA1-2021 y el ozono con la NOM-020-SSA1-2021, ambas publicadas en 2021 con cumplimiento gradual \cite{nom025,sinaica}. La Tabla~\ref{tab:normas} compara los valores vigentes en 2026 con las gu\'ias de la OMS.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+Contaminante & Indicador & Norma mexicana (desde 2026) & Gu\'ia OMS 2021 \\
+\midrule
+PM$_{10}$  & Promedio 24 h & 50 \ugm{} & 45 \ugm{} \\
+PM$_{2.5}$ & Promedio 24 h & 25 \ugm{} & 15 \ugm{} \\
+PM$_{2.5}$ & Promedio anual & 10 \ugm{} & 5 \ugm{} \\
+O$_3$ & M\'aximo diario, media m\'ovil 8 h & 0.051 ppm & 100 \ugm{} (aprox. 51 ppb) \\
+\bottomrule
+\end{tabular}
+\caption{Valores l\'imite mexicanos para 2026 \cite{sinaica,universal2025} y gu\'ias de la OMS \cite{who2021,amini2021}.}
+\label{tab:normas}
+\end{table}
+
+La problem\'atica tiene tres aristas. Primero, el endurecimiento es escalonado: para PM$_{10}$ el l\'imite de 24 h pasa de 70 \ugm{} en 2022--2023 a 60 en 2024--2025 y a 50 desde 2026, y para el ozono de 0.065 a 0.060 y a 0.051 ppm \cite{sinaica}. Segundo, la autoridad federal advirti\'o que, al ser m\'as protectoras, las nuevas cifras har\'an que en algunas ciudades parezca que la contaminaci\'on aumenta porque habr\'a m\'as d\'ias en incumplimiento, sin que eso implique necesariamente un deterioro real \cite{universal2025}. Para un an\'alisis de 2020 a 2025 esto significa que el umbral cambia dentro del periodo y que las excedencias no son comparables a\~no con a\~no si no se fija un criterio. Tercero, no existe una norma oficial mexicana ni una gu\'ia mundial que homogenice los planes de contingencia, por lo que cada entidad federativa tiene los suyos \cite{universal2025}.
+
+\subsection{Dificultades de la medici\'on}
+Medir la calidad del aire no es solo instalar sensores. Los equipos tienen un rango del fabricante y un rango de operaci\'on v\'alido que cambia por a\~no, y las lecturas fuera de esos rangos deben descartarse; los documentos de SIMA incluyen notas espec\'ificas por a\~no y par\'ametro (por ejemplo, en 2020 no se consideran velocidades de viento superiores a 75 km/h ni lecturas de radiaci\'on solar por encima del rango) \cite{sima_ranges}. A ello se suman los huecos por fallas o mantenimiento, la cobertura espacial limitada de una red de estaciones fijas y el sesgo que introduce la percepci\'on social cuando se contrasta con los datos objetivos \cite{sanchez2026}.
+
+\subsection{Qui\'en es SIMA}
+El Sistema Integral de Monitoreo Ambiental (SIMA) de Nuevo Le\'on inici\'o operaciones el 20 de noviembre de 1992 con cinco estaciones de monitoreo en tiempo real \cite{sima_uanl}. Hoy la red opera con 15 estaciones fijas y dos unidades m\'oviles distribuidas en 11 municipios del \'area metropolitana \cite{sima_nl}. En 2025 el gobierno estatal anunci\'o una modernizaci\'on de 14 millones de pesos para alcanzar cobertura completa de contaminantes y adoptar est\'andares internacionales m\'as estrictos en ozono y part\'iculas, seg\'un la directora de la Agencia de la Calidad del Aire \cite{sima_abc}. Su operaci\'on se supervisa desde el C5 Ambiental, un centro de monitoreo en tiempo real \cite{sima_nl}. SIMA y la Agencia de la Calidad del Aire son el socio formador de este reto.
+
+%-------------------------------------------------------------
+\section{Resumen de la revisi\'on bibliogr\'afica}
+
+\subsection{Importancia de la medici\'on de la calidad del aire y su impacto social}
+Las gu\'ias de la OMS de 2021 son el marco de referencia internacional, y su actualizaci\'on redujo de forma importante los valores recomendados: el anual de PM$_{2.5}$ pas\'o de 10 a 5 \ugm{}, el de PM$_{10}$ de 20 a 15 y el de NO$_2$ de 40 a 10 \ugm{}, adem\'as de incorporar un valor de ozono para la temporada pico de 60 \ugm{} \cite{amini2021}. En M\'exico, la Semarnat anunci\'o que desde enero de 2026 ser\'an obligatorios valores m\'as restrictivos para PM$_{10}$, PM$_{2.5}$ y ozono \cite{universal2025}. Desde otra l\'inea, se ha propuesto abordar la evaluaci\'on y gesti\'on de la calidad del aire con un enfoque de ciencia de datos \cite{represa2020}, y hay evaluaciones integrales de la calidad del aire en megaciudades mexicanas que sirven de antecedente metodol\'ogico \cite{molina2002}. La literatura de salud p\'ublica ambiental a\~nade que los datos objetivos deben integrarse con la percepci\'on social para que las pol\'iticas sean efectivas \cite{sanchez2026}.
+
+\subsection{Lo que se ha hecho sobre ozono y precursores en Monterrey}
+El ozono es un problema documentado en la zona desde los noventa. Una tesis doctoral de 1998 integr\'o datos de calidad del aire, emisiones y clima y report\'o que el est\'andar mexicano de 110 ppbv se excedi\'o en 63 d\'ias entre 1993 y 1995 \cite{martinez_repo}. Sus episodios se asociaron con sistemas de alta presi\'on, pasos de frentes fr\'ios y vientos de monta\~na-valle que generaban subsidencia, inversi\'on de flujo y estancamiento, y se concluy\'o que las emisiones industriales eran un contribuyente importante y que reducir hidrocarburos era la estrategia m\'as efectiva \cite{martinez_repo}.
+
+Trabajos recientes confirman el papel de la meteorolog\'ia. Un an\'alisis de 2019 a 2023 en cinco municipios del \'area metropolitana encontr\'o que los factores meteorol\'ogicos gobiernan sobre todo el ciclo estacional del O$_3$, mientras que su distribuci\'on espacial est\'a modulada por la interacci\'on entre fuentes locales y transporte atmosf\'erico; utiliz\'o m\'etodos no param\'etricos y basados en percentiles y compar\'o Monterrey con otras ciudades mexicanas \cite{persistent2026}. En la zona petroqu\'imica de Cadereyta se evalu\'o directamente la influencia de NO, NO$_2$ y NO$_x$ junto con variables meteorol\'ogicas sobre las concentraciones de O$_3$ \cite{cadereyta2025}. Por su parte, el comportamiento estacional es distinto seg\'un el contaminante: las part\'iculas aumentan en la \'epoca seca y el ozono en la h\'umeda, con inversi\'on t\'ermica, viento y orograf\'ia como factores naturales y movilidad e industria como factores antropog\'enicos \cite{fajardo2023}. En el caso de PM$_{10}$ hay an\'alisis estad\'isticos de series de 2010 a 2018 en el \'area metropolitana \cite{aguirre2022}.
+
+%-------------------------------------------------------------
+\section{Descripci\'on del problema}
+La evidencia muestra que el ozono es uno de los contaminantes m\'as problem\'aticos de la Zona Metropolitana de Monterrey (ZMM), que se forma a partir de precursores como NO, NO$_2$ y NO$_x$ y que est\'a fuertemente modulado por la meteorolog\'ia \cite{fajardo2023,persistent2026,cadereyta2025}. Sin embargo, buena parte de los antecedentes se centra en un municipio, en un periodo corto o en un solo m\'etodo, y el endurecimiento normativo de 2026 cambia el criterio con el que se juzgan las excedencias \cite{universal2025,sinaica}. Con base en esto, el problema de este proyecto se plantea as\'i:
+
+\begin{quote}
+\textbf{Pregunta de investigaci\'on.} \textquestiondown C\'omo se relacionan las concentraciones de ozono con sus precursores (NO, NO$_2$, NO$_x$) y con las variables meteorol\'ogicas (temperatura, radiaci\'on solar, viento, humedad y presi\'on) en las estaciones de SIMA entre 2020 y 2025, y qu\'e combinaci\'on de estas variables permite explicar y clasificar los episodios de excedencia de ozono?
+\end{quote}
+
+%-------------------------------------------------------------
+\section{Objetivos}
+\textbf{Objetivo general.} Identificar y cuantificar, mediante t\'ecnicas de an\'alisis multivariado, la relaci\'on entre el ozono, sus precursores y la meteorolog\'ia en la ZMM para explicar y clasificar los episodios de excedencia.
+
+\textbf{Objetivos espec\'ificos.}
+\begin{enumerate}\itemsep0pt
+\item Depurar y estructurar las series de SIMA de 2020 a 2025 aplicando los rangos de operaci\'on v\'alidos por a\~no y par\'ametro.
+\item Caracterizar la variaci\'on diaria, estacional y entre estaciones del O$_3$, NO, NO$_2$ y NO$_x$.
+\item Reducir la dimensionalidad y detectar patrones conjuntos de contaminantes y meteorolog\'ia (p.\,ej., componentes principales y conglomerados de estaciones).
+\item Modelar el O$_3$ en funci\'on de precursores y meteorolog\'ia con regresi\'on lineal m\'ultiple y evaluar su ajuste y validaci\'on.
+\item Clasificar d\'ias o episodios con y sin excedencia de la norma de ozono mediante an\'alisis discriminante, comparando los umbrales de 2024 y 2026 (60 y 51\,ppb) aplicados a todo el periodo.
+\end{enumerate}
+
+%-------------------------------------------------------------
+\section{Justificaci\'on}
+Existe un consenso de que la meteorolog\'ia y los precursores explican buena parte de la variabilidad del ozono en Monterrey \cite{persistent2026,martinez_repo}, pero lo que falta es un an\'alisis multivariado que integre conjuntamente esas variables con datos recientes de varias estaciones y que lo haga bajo los umbrales de 2026. Los estudios previos estudian pocas estaciones, un solo contaminante o periodos anteriores a la norma vigente \cite{aguirre2022,cadereyta2025}. Adem\'as, como el l\'imite de ozono baj\'o de 0.065 a 0.051 ppm dentro del periodo de estudio \cite{sinaica}, distinguir si un aumento de excedencias refleja un deterioro real o solo un criterio m\'as estricto \cite{universal2025} exige modelos que controlen la meteorolog\'ia. Los resultados servir\'ian a SIMA y a la Agencia de la Calidad del Aire para anticipar condiciones de acumulaci\'on, orientar el control de precursores y comunicar el riesgo a la ciudadan\'ia.
+
+%-------------------------------------------------------------
+\section{Descripci\'on de las fuentes de informaci\'on}
+La fuente principal son los datos horarios del Sistema Integral de Monitoreo Ambiental descargados del portal de SIMA para 2020 a 2025: 6 archivos, 87 hojas estaci\'on--a\~no, 754,603 registros, 16 columnas y 13 a 15 estaciones seg\'un el a\~no (Tabla~\ref{tab:registros}). No se incluye el a\~no parcial de 2026. Las variables son los contaminantes criterio (PM$_{10}$, PM$_{2.5}$, O$_3$, NO, NO$_2$, NO$_x$, SO$_2$, CO) y las meteorol\'ogicas (RH, WS, TEMP, SR, BP, WD, RAINF) \cite{sima_ranges}.
+
+Como apoyo se cuenta con el documento de rangos de los par\'ametros del SIMA, que establece para cada a\~no el rango de operaci\'on v\'alido, el rango del fabricante y notas de exclusi\'on, y que se usar\'a para detectar valores espurios \cite{sima_ranges}; y el documento con la ubicaci\'on de las estaciones de monitoreo.
+
+El archivo \texttt{Etiquetas.xlsx} funciona como diccionario de los datos y tiene dos hojas. La hoja \textit{Variables} contiene las notas de uso, la correspondencia entre las abreviaturas de las estaciones y su nombre y municipio (por ejemplo, SE es La Pastora, en Guadalupe), y la lista de contaminantes y par\'ametros meteorol\'ogicos con sus unidades. La hoja \textit{Banderas} describe los c\'odigos de validaci\'on que usa SIMA (falla el\'ectrica, calibraci\'on, apagado, valores repetidos, fuera de rango, entre otros) y si la hora se considera v\'alida o inv\'alida. Se us\'o para confirmar nombres y unidades de las variables; los libros de 2020 a 2025 no traen columnas de banderas, por lo que no se aplic\'o. Las notas del archivo hablan de promedios diarios, mientras que los libros usados son horarios, lo cual conviene confirmar con el socio formador. Los materiales PIMUS, el inventario de emisiones de 2018 y el padr\'on de medio ambiente no est\'an en el repositorio y no se usaron en esta etapa; si se incorporan m\'as adelante se describir\'an en el siguiente entregable.
+
+%-------------------------------------------------------------
+\section{Comprensi\'on de los datos}
+
+\subsection{Dimensi\'on del dataset}
+Como se mencion\'o anteriormente, las fuentes principales que ser\'an empleadas durante la realizaci\'on de este proyecto est\'an compuestas por las bases de datos proporcionadas por SIMA, que comprenden la informaci\'on recabada desde 2020 hasta 2025 de los contaminantes presentes en el aire que han sido monitoreados por medio de las estaciones del sistema que se encuentran repartidas a lo largo del \'area metropolitana de Monterrey.
+
+Estas bases de datos est\'an organizadas y separadas por a\~no, compuest\'andose por un total de 6 archivos de Excel (2020 a 2025), y a su vez, cada uno de estos se encuentra dividido por estaci\'on de monitoreo, lo que da 87 hojas estaci\'on--a\~no. Se trabaja con 2020 a 2025, a\~nos completos; el a\~no parcial de 2026 queda fuera de este an\'alisis. En la siguiente tabla se muestra el n\'umero de registros y estaciones presentes en cada una de las bases de datos a analizar.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lcr@{}}
+\toprule
+A\~no & Estaciones disponibles & Registros \\
+\midrule
+2020 & 13 & 114,102 \\
+2021 & 14 & 122,629 \\
+2022 & 15 & 123,383 \\
+2023 & 15 & 131,370 \\
+2024 & 15 & 131,741 \\
+2025 & 15 & 131,378 \\
+\midrule
+Total & -- & 754,603 \\
+\bottomrule
+\end{tabular}
+\caption{Cantidad de registros y estaciones disponibles por base de datos.}
+\label{tab:registros}
+\end{table}
+
+Los registros presentes en las bases de datos representan las mediciones realizadas cada hora de los contaminantes y par\'ametros meteorol\'ogicos monitoreados por una determinada estaci\'on. Sin embargo, es importante aclarar que esto no significa que se hayan monitoreado 754,603 horas en total, ya que al haber numerosas estaciones en funcionamiento simult\'aneamente, una misma hora puede aparecer una vez por cada estaci\'on.
+
+Por otro lado, en cuanto a las columnas, cada base de datos posee un total de 16 columnas que se repiten por cada estaci\'on u hoja:
+\begin{itemize}\itemsep0pt
+\item \textbf{Temporal:} fecha y hora (\textit{date}).
+\item \textbf{Contaminantes:} CO, NO, NO$_2$, NO$_X$, O$_3$, PM$_{10}$, PM$_{2.5}$, SO$_2$.
+\item \textbf{Variables meteorol\'ogicas:} PRS, RAINF, RH, SR, TOUT, WSR, WDR.
+\end{itemize}
+Por lo tanto, las bases de datos originales se componen de un total de 754,603 registros y 16 columnas, aunque m\'as adelante estos valores presentar\'an cambios conforme se realice la selecci\'on y limpieza de los datos.
+
+\subsection{Descripci\'on de las variables}
+A continuaci\'on se encuentra la descripci\'on e informaci\'on relevante de cada una de las variables antes mencionadas.
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{@{}p{1.5cm}p{4.3cm}p{1.9cm}p{1.8cm}p{2.5cm}p{1.7cm}@{}}
+\toprule
+Variable & Descripci\'on & Unidad & Tipo & Valores posibles & Nulos (\%) \\
+\midrule
+CO & Mon\'oxido de carbono & ppm & Num\'erica & Var\'ia por a\~no & 13.3 \\
+NO & Mon\'oxido de nitr\'ogeno & ppb & Num\'erica & Var\'ia por a\~no & 16.7 \\
+NO$_2$ & Di\'oxido de nitr\'ogeno & ppb & Num\'erica & Var\'ia por a\~no & 17.4 \\
+NO$_X$ & Suma de NO y NO$_2$ & ppb & Num\'erica & Var\'ia por a\~no & 16.8 \\
+O$_3$ & Ozono & ppb & Num\'erica & Var\'ia por a\~no & 14.7 \\
+PM$_{10}$ & Part\'iculas menores a 10 $\mu$m & \ugm{} & Num\'erica & Var\'ia por a\~no & 4.6 \\
+PM$_{2.5}$ & Part\'iculas menores a 2.5 $\mu$m & \ugm{} & Num\'erica & Var\'ia por a\~no & 25.2 \\
+SO$_2$ & Di\'oxido de azufre & ppb & Num\'erica & Var\'ia por a\~no & 15.0 \\
+PRS & Presi\'on atmosf\'erica & mmHg & Num\'erica & Var\'ia por a\~no & 5.1 \\
+RAINF & Precipitaci\'on & mm/h & Num\'erica & Var\'ia por a\~no & 4.7 \\
+RH & Humedad relativa & \% & Num\'erica & 0--100 & 11.4 \\
+SR & Radiaci\'on solar & kW/m$^2$ & Num\'erica & Var\'ia por a\~no & 3.7 \\
+TOUT & Temperatura & $^\circ$C & Num\'erica & Var\'ia por a\~no & 6.9 \\
+WSR & Velocidad del viento & km/h & Num\'erica & Var\'ia por a\~no & 6.9 \\
+WDR & Direcci\'on del viento & grados (0--360$^\circ$) & Num\'erica & 0--360 & 8.4 \\
+Fecha/hora & Momento de la medici\'on & -- & Temporal & -- & 0.0 \\
+\bottomrule
+\end{tabular}
+\caption{Descripci\'on e informaci\'on de las variables presentes en las bases de datos. Nulos: porcentaje de las 754,603 horas de 2020--2025 sin dato en la base original.}
+\label{tab:variables}
+\end{table}
+En conjunto, 11.39\,\% de las celdas de las 15 mediciones est\'a vac\'ia en la base original.
+
+Los valores posibles de muchas de las variables cambian seg\'un el a\~no de medici\'on, debido a los diferentes rangos de operaci\'on que ha establecido SIMA.
+
+Por su parte, no todas las variables se ajustan con los objetivos que se buscan alcanzar, por lo que es de gran importancia identificar cu\'ales de estas pueden contribuir en mayor medida a la problem\'atica a tratar. Con base en esto, las variables que tienen un mayor valor y relaci\'on con el objetivo central del proyecto son O$_3$, NO, NO$_2$, NO$_X$, TOUT, SR, WSR, WDR, RH y PRS.
+
+Comenzando por el ozono, se podr\'ia decir que este es la pieza central y la ra\'iz de la problem\'atica que se busca atender, ya que, como se describi\'o anteriormente, este es uno de los contaminantes que m\'as problemas ha producido en la zona metropolitana. Debido a esto, es indispensable tener esta variable presente a lo largo del desarrollo del proyecto. Al O$_3$ lo acompa\~nan el NO y NO$_2$, contaminantes precursores que le dan forma, adem\'as de NO$_X$, que representa de manera conjunta estos \'oxidos de nitr\'ogeno. Estas variables, de la mano de par\'ametros meteorol\'ogicos como TOUT, SR, WSR, WDR, RH y PRS, est\'an asociados con la formaci\'on, dispersi\'on y el ciclo estacional del O$_3$. Por lo tanto, cada una de estas variables podr\'ia brindar informaci\'on importante para entender en mayor profundidad las condiciones que dan pie al aumento o excedencia de ozono.
+
+Ahora, aunque otras variables como PM$_{10}$, PM$_{2.5}$, SO$_2$, CO y RAINF podr\'ian ser \'utiles, no son una parte central de la pregunta de investigaci\'on, y, a comparaci\'on de las otras, est\'an relacionadas en menor medida con la tem\'atica del proyecto. Sin embargo, a pesar de que se hayan se\~nalado a algunas de las variables como importantes o poco relevantes para el an\'alisis, esto no quiere decir que la selecci\'on quedar\'a exactamente de esa manera, ya que eso se determinar\'a una vez que se haya realizado la limpieza de los datos.
+
+\subsection{Calidad de los datos}
+La revisi\'on se hizo sobre los libros de 2020 a 2025 disponibles en el repositorio: 87 hojas estaci\'on--a\~no, 754,603 registros horarios y 16 columnas (fecha y 15 mediciones). El a\~no parcial de 2026 queda fuera del an\'alisis, por lo que las cifras de esta parte no lo incluyen.
+
+\textbf{Valores nulos.} Faltan datos en 11.39\,\% de las celdas (Tabla~\ref{tab:variables}). La proporci\'on es m\'as alta en PM$_{2.5}$ (25.2\,\%) y en los gases NO$_2$, NO, NO$_X$, SO$_2$ y O$_3$ (15--17\,\%), y se concentra en estaciones--a\~no completas sin sensor y en 2020, donde cerca de 61\,\% de las horas de ozono no tiene dato. Los vac\'ios, por tanto, no son aleatorios. \textbf{Duplicados:} no hay filas repetidas ni pares estaci\'on--fecha duplicados. \textbf{Valores espurios:} se encontr\'o el c\'odigo centinela $-9999$ en 7 variables, lecturas fuera del rango de operaci\'on de SIMA (por ejemplo, vientos de m\'as de 100\,km/h y temperaturas de $-60\,^\circ$C) y rachas de meses con el mismo valor, como NO$_2$ fijo en 0.5\,ppb hasta 744 horas seguidas, t\'ipico de un sensor apagado. \textbf{Inconsistencias:} NO$_X$ debe ser la suma de NO y NO$_2$, pero difiere en m\'as de 2\,ppb en 7,143 registros (alrededor de 1\,\%).
+
+%-------------------------------------------------------------
+\section{Preparaci\'on de los datos}
+
+\subsection{Selecci\'on de datos}
+\textbf{Uni\'on de bases.} Los seis libros tienen la misma estructura (una hoja por estaci\'on y 16 columnas, salvo que la fecha se llama \textit{Fecha y hora} hasta 2024 y \textit{date} en 2025), as\'i que no se separaron: se apilaron las 87 hojas en una sola tabla con las columnas \texttt{anio\_libro} y \texttt{estacion}. No se necesit\'o cruzar con otras fuentes; PIMUS, el inventario de emisiones y el padr\'on no est\'an en el repositorio y no se usaron.
+
+\textbf{Qu\'e se incluy\'o.} Se conservaron las 15 estaciones y el periodo 2020--2025. El a\~no 2020 se mantiene en la depuraci\'on pero queda fuera de los modelos, porque tiene la mayor p\'erdida de datos en gases y varias estaciones sin sensor. De las 15 variables, se seleccionaron 10 (Tabla~\ref{tab:seleccion}); se excluyeron PM$_{10}$, PM$_{2.5}$, SO$_2$, CO y RAINF (33\,\% de las columnas) en esta primera versi\'on, porque no son centrales para la pregunta de investigaci\'on y, en el caso de PM$_{2.5}$, tiene 25.2\,\% de nulos. Estas variables se limpiaron igualmente, de modo que pueden reincorporarse sin repetir el proceso.
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{@{}p{2.3cm}p{2.4cm}p{9.3cm}@{}}
+\toprule
+Variable & Rol & Relevancia para el objetivo \\
+\midrule
+O$_3$ & Objetivo & Variable central: se modela en forma continua y como excedencia diaria. \\
+NO, NO$_2$ & Precursores & Participan directamente en la formaci\'on fotoqu\'imica de ozono. \\
+NO$_X$ & Precursor & Redundante con NO + NO$_2$; en un mismo modelo se usa NO$_X$ o el par, para evitar multicolinealidad. \\
+TOUT, SR & Meteorolog\'ia & Temperatura y radiaci\'on favorecen la formaci\'on de ozono. \\
+WSR, WDR & Meteorolog\'ia & Dispersi\'on y transporte; la direcci\'on es circular y se reemplaza por componentes del viento. \\
+RH, PRS & Meteorolog\'ia & Humedad y presi\'on asociadas a estancamiento y a los episodios. \\
+\bottomrule
+\end{tabular}
+\caption{Variables seleccionadas y su relevancia.}
+\label{tab:seleccion}
+\end{table}
+
+\textbf{Columnas objetivo.} Son O$_3$ y la excedencia diaria: el m\'aximo diario de la media m\'ovil de 8\,h (al menos 6 de 8 horas v\'alidas, y d\'ias con al menos 75\,\% de horas v\'alidas) que supera un umbral. Como la norma endurece el l\'imite dentro del periodo (Secci\'on 1.3), se fijaron dos criterios constantes en todos los a\~nos, 60\,ppb y 51\,ppb, para que las excedencias sean comparables. Los valores escalonados por a\~no provienen de la consulta a SINAICA \cite{sinaica}; no se contrastaron aqu\'i con el texto del Diario Oficial de la Federaci\'on, por lo que 60 y 51\,ppb se manejan como criterios de trabajo sujetos a esa verificaci\'on.
+
+\subsection{Limpieza de datos}
+Los libros originales no se modificaron; la limpieza se hizo en c\'odigo (documento R Markdown \texttt{02\_preparacion\_}\allowbreak\texttt{datos.Rmd}) y cada regla qued\'o contabilizada. Las reglas se aplican en orden y todo valor invalidado pasa a \texttt{NA}; ning\'un registro se elimin\'o. La Tabla~\ref{tab:limpieza} resume el efecto sobre las 10 variables seleccionadas.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Regla & Valores invalidados & \% del total invalidado \\
+\midrule
+Duplicados por estaci\'on y fecha & 0 & -- \\
+Centinela $-9999$ & 25 & 0.1 \\
+Fuera del rango de operaci\'on de SIMA por a\~no & 4,191 & 23.8 \\
+PRS fuera de 680--760\,mmHg & 4 & $<0.1$ \\
+RH exactamente 0\,\% & 70 & 0.4 \\
+Rachas de 24\,h o m\'as con el mismo valor & 13,353 & 75.7 \\
+\midrule
+Total & 17,643 & 100 \\
+\bottomrule
+\end{tabular}
+\caption{Valores invalidados por regla (10 variables seleccionadas). El total equivale a 0.26\,\% de los valores originales con dato.}
+\label{tab:limpieza}
+\end{table}
+
+\textbf{Valores espurios.} Se usaron los rangos de operaci\'on por a\~no del documento de SIMA, transcritos a un archivo versionado. La presi\'on es la excepci\'on: el rango del documento es \'unico para la red, pero la presi\'on depende de la altitud (hay estaciones con mediana de 701\,mmHg y otra de 731\,mmHg), y aplicarlo literalmente habr\'ia descartado miles de lecturas aparentemente v\'alidas; se us\'o un rango f\'isico de 680--760\,mmHg. \textbf{NO$_X$}: no se recalcul\'o ni se elimin\'o; se marc\'o con una bandera (\texttt{flag\_NOX}).
+
+\textbf{Valores faltantes e imputaci\'on.} \emph{No se imput\'o ning\'un valor (0\,\%).} Los vac\'ios se concentran en estaciones--a\~no completas, imputarlos habr\'ia inventado series enteras, y el ozono es la variable objetivo, por lo que imputarla ser\'ia circular. Tras la limpieza, el porcentaje de datos faltantes en las 10 variables pas\'o de 10.80\,\% a 11.03\,\%. Se trabaja con casos completos por estaci\'on--d\'ia (al menos 18 horas v\'alidas por variable): de 32,880 estaci\'on--d\'ias, 26,757 (81.4\,\%) tienen ozono v\'alido, y en 2021--2025 son 19,585 de 27,390 (71.5\,\%) los que tienen ozono y todos los atributos del modelo. Se descarta, por tanto, 28.5\,\% de los estaci\'on--d\'ias de 2021--2025 por no tener alguna variable; adem\'as, todo 2020 (5,490 estaci\'on--d\'ias, 16.7\,\%) queda fuera de los modelos. Quedan 6,749 horas (0.89\,\%) con las 10 variables vac\'ias; se conservan en la base horaria porque documentan el hueco temporal.
+
+\textbf{Valores at\'ipicos.} Con el criterio de Tukey (m\'as de 3 rangos intercuart\'ilicos fuera de los cuartiles), 77,314 valores (1.15\,\% de los v\'alidos) son extremos, casi todos en NO (47,610) y NO$_X$ (22,329). \emph{No se eliminaron ni se recortaron}: son concentraciones altas plausibles dentro del rango del instrumento y los episodios altos de ozono son precisamente lo que se quiere clasificar. Su efecto se atenuar\'a con las transformaciones de la secci\'on siguiente.
+
+\textbf{Variables categ\'oricas.} La estaci\'on (15 niveles, nominal) se mantiene como factor; se crear\'an variables \textit{dummy} ($k-1$ columnas) s\'olo en la regresi\'on lineal y la log\'istica. Para PCA, conglomerados y an\'alisis discriminante no se usan, porque esos m\'etodos requieren variables continuas. La direcci\'on del viento no es categ\'orica sino circular.
+
+%-------------------------------------------------------------
+\section{Transformaci\'on de datos}
+\textbf{Reestructuraci\'on.} La unidad de an\'alisis de los objetivos es la estaci\'on--d\'ia, por lo que, adem\'as de la base horaria limpia (754,603 filas y 15 columnas: identificadores, las 10 variables y dos banderas), se construy\'o una base diaria con 32,880 filas (una por estaci\'on y d\'ia) y 31 columnas en formato ancho, y un perfil por estaci\'on para el conglomerado de estaciones. No se requiri\'o formato largo.
+
+\textbf{Atributos derivados.} Valores diarios con al menos 18 horas v\'alidas: medias de NO, NO$_2$, NO$_X$, RH, PRS, SR y WSR; temperatura media y m\'axima; \texttt{NOX\_manana} (media de 06 a 09\,h, hip\'otesis del dominio sobre los precursores emitidos por el tr\'afico matutino); componentes $u$ y $v$ del viento, que sustituyen a la direcci\'on circular; \texttt{O3\_prev} (m\'aximo de 8\,h del d\'ia anterior); y calendario (mes, temporada, fin de semana y ciclo anual como seno y coseno). En 2021--2025 hay 24,931 d\'ias--estaci\'on con ozono v\'alido, de los cuales 4,209 (16.9\,\%) exceden 60\,ppb y 7,977 (32.0\,\%) exceden 51\,ppb, por lo que la clase de excedencia est\'a desbalanceada.
+
+\textbf{Discretizaci\'on.} No es necesaria para los predictores: los m\'etodos previstos usan variables continuas y agrupar en intervalos descartar\'ia informaci\'on. La \'unica discretizaci\'on es la de la variable objetivo.
+
+\textbf{Normalizaci\'on y escalamiento.} Las medias diarias de NO, NO$_2$, NO$_X$ y \texttt{NOX\_manana} tienen asimetr\'ia alta (1.4 a 4.1), que baja a menos de 1 en valor absoluto con $\log(1+x)$, as\'i que se transformaron. O$_3$ (asimetr\'ia 0.6) y la meteorolog\'ia no se transformaron: se mantiene el ozono en ppb para compararlo con los umbrales. La estandarizaci\'on (media 0, desviaci\'on 1) se aplicar\'a s\'olo en PCA, conglomerados y discriminante; en los modelos supervisados se ajustar\'a con los datos de entrenamiento para evitar fuga de informaci\'on, y por ello la base no guarda columnas estandarizadas. Entre los atributos hay colinealidad esperada (NO$_X$ con NO, y temperatura media con m\'axima, con correlaciones cercanas a 0.9 o m\'as), que se revisar\'a al modelar.
+
+%-------------------------------------------------------------
+\section{Resumen de la preparaci\'on y acceso a la base limpia}
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lr@{}}
+\toprule
+Concepto & Valor \\
+\midrule
+Registros horarios originales (2020--2025) & 754,603 \\
+Variables originales (sin fecha, estaci\'on ni a\~no) & 15 \\
+Variables seleccionadas & 10 \\
+Datos faltantes originales (15 / 10 variables) & 11.39\,\% / 10.80\,\% \\
+Datos faltantes tras la limpieza (10 variables) & 11.03\,\% \\
+Registros duplicados eliminados & 0 \\
+Valores invalidados (convertidos a vac\'io) & 17,643 (0.26\,\%) \\
+Valores imputados & 0 \\
+Registros eliminados & 0 \\
+Estaci\'on--d\'ias de la base diaria (columnas) & 32,880 (31) \\
+Estaci\'on--d\'ias completos en 2021--2025 & 19,585 (71.5\,\%) \\
+\bottomrule
+\end{tabular}
+\caption{Resumen de la preparaci\'on de datos.}
+\label{tab:resumen}
+\end{table}
+
+La base diaria limpia (\texttt{sima\_diaria\_estacion.csv}) y el c\'odigo que la genera est\'an en el repositorio del equipo: \url{https://github.com/Ricardo-B04/sima-monitoreo-ambiental}, ruta \texttt{datos/procesados/}. La base horaria limpia (754,603 filas) no se entrega como archivo; se reproduce ejecutando \texttt{02\_preparacion\_datos.Rmd} sobre los libros originales. El repositorio es p\'ublico y los profesores tienen acceso; el archivo \texttt{.csv} se subi\'o al repositorio mediante commit y push.
+
+%-------------------------------------------------------------
+\section{Declaratoria de uso de inteligencia artificial}
+\textbf{Opci\'on B. Se utiliz\'o IA de la siguiente forma:}
+\begin{itemize}\itemsep0pt
+\item \textbf{Herramienta:} Posit Assistant, asistente de IA generativa integrado en RStudio.
+\item \textbf{Uso realizado:} apoyo en la exploraci\'on de las bases, en la escritura del c\'odigo en R para la limpieza y transformaci\'on (documentos R Markdown), en el c\'alculo de las cifras reportadas y en la redacci\'on de borradores de las secciones indicadas. No se utiliz\'o IA para la investigaci\'on previa (introducci\'on y revisi\'on bibliogr\'afica) tal como exist\'ia antes de este trabajo; el uso se limit\'o a lo descrito.
+\item \textbf{Secciones donde se utiliz\'o:} Comprensi\'on de los datos (calidad), Preparaci\'on de los datos, Transformaci\'on de datos y Resumen de la preparaci\'on.
+\item \textbf{Validaci\'on realizada por los estudiantes:} se revis\'o y verific\'o el c\'odigo y las cifras contra las bases originales, y se asume la responsabilidad del contenido final entregado. La revisi\'on consisti\'o en ejecutar los documentos R Markdown (\texttt{01\_comprension\_datos.Rmd} y \texttt{02\_preparacion\_datos.Rmd}) y contrastar las cifras de las tablas del informe con su salida.
+\end{itemize}
+
+%-------------------------------------------------------------
+\begin{thebibliography}{99}
+\small
+\setlength{\itemsep}{1pt}
+
+\bibitem{who2021} World Health Organization (2021). \textit{WHO global air quality guidelines: particulate matter (PM$_{2.5}$ and PM$_{10}$), ozone, nitrogen dioxide, sulfur dioxide and carbon monoxide}. Ginebra: OMS. \url{https://iris.who.int/handle/10665/345329}
+
+\bibitem{whoreviews} P\'erez Velasco, R., \& Jarosi\'nska, D. (2022). Update of the WHO global air quality guidelines: Systematic reviews -- An introduction. \textit{Environment International}, 170, 107556. doi:10.1016/j.envint.2022.107556
+
+\bibitem{kapsarc} KAPSARC Data Portal. \textit{WHO global air quality guidelines} (resumen de la gu\'ia de la OMS 2021). \url{https://datasource.kapsarc.org/explore/assets/who-global-air-quality-guidelines/}
+
+\bibitem{amini2021} Amini, H. (2021). WHO Air Quality Guidelines Need to be Adopted. \textit{International Journal of Public Health}, 66, 1604483. doi:10.3389/ijph.2021.1604483
+
+\bibitem{nom025} Secretar\'ia de Salud (2021). NOM-025-SSA1-2021, Salud ambiental. Criterio para evaluar la calidad del aire ambiente con respecto a las part\'iculas suspendidas PM$_{10}$ y PM$_{2.5}$. \textit{Diario Oficial de la Federaci\'on}, 27 de octubre. \url{https://dof.gob.mx/nota_detalle.php?codigo=5633855&fecha=27/10/2021}
+
+\bibitem{sinaica} Sistema Nacional de Informaci\'on de la Calidad del Aire (SINAICA), INECC. Normas Oficiales Mexicanas de salud ambiental (incluye NOM-020-SSA1-2021 para ozono). \url{https://sinaica.inecc.gob.mx/pags/noms.php}
+
+\bibitem{universal2025} Endurecer\'an la medici\'on de la calidad del aire (2025, 11 de diciembre). \textit{El Universal de M\'exico}. \url{https://link.gale.com/apps/doc/A867382483/GIC?u=itesmgic&sid=ebsco&xid=717c98d7}
+
+\bibitem{sanchez2026} S\'anchez-Mart\'inez, D. V. (2026). De la medici\'on objetiva a la percepci\'on social en la salud p\'ublica ambiental. \textit{TEPEXI Bolet\'in Cient\'ifico de la Escuela Superior Tepeji del R\'io}, 13(26), 15--20. doi:10.29057/estr.v13i26.17315
+
+\bibitem{represa2020} Represa, N. S. (2020). \textit{Elaboraci\'on e implementaci\'on de una propuesta metodol\'ogica para la evaluaci\'on y gesti\'on de la calidad del aire mediante el enfoque de la ciencia de datos} (Tesis doctoral). Universidad Nacional de La Plata.
+
+\bibitem{molina2002} Molina, L. T., \& Molina, M. J. (Eds.) (2002). \textit{Air quality in the Mexico megacity: an integrated assessment} (Vol. 2). Dordrecht: Kluwer Academic Publishers.
+
+\bibitem{aguirre2022} Aguirre-L\'opez, M. A., Rodr\'iguez-Gonz\'alez, M. A., Soto-Villalobos, R., G\'omez-S\'anchez, L. E., Benavides-R\'ios, \'A. G., Benavides-Bravo, F. G., Walle-Garc\'ia, O., \& Paman\'es-Aguilar, M. G. (2022). Statistical Analysis of PM$_{10}$ Concentration in the Monterrey Metropolitan Area, Mexico (2010--2018). \textit{Atmosphere}, 13(2), 297. doi:10.3390/atmos13020297
+
+\bibitem{fajardo2023} Fajardo-Montiel, A. L., \& Ram\'irez-S\'anchez, H. U. (2023). Evolution of Air Pollution in the Monterrey Metropolitan Area, Mexico. \textit{Asian Journal of Environment \& Ecology}, 21(1), 55--75. doi:10.9734/ajee/2023/v21i1453
+
+\bibitem{cadereyta2025} Jaramillo-Perez, J. M., Mac\'ias-Hern\'andez, B. A., Tello-Leal, E., \& Ventura-Houle, R. (2025). Effect of Nitrogen Oxide Concentration Levels and Meteorological Variables on Ozone (O$_3$) Formation in the Petrochemical Industry Area in the Monterrey Metropolitan, Mexico. \textit{Environmental and Earth Sciences Proceedings}, 34(1), 3. doi:10.3390/eesp2025034003 (presentado en ECAS-7, 4--6 de junio de 2025)
+
+\bibitem{persistent2026} Hern\'andez-Romero, K., Hern\'andez-Romero, I. M., Mendoza, A., P\'erez-Rodr\'iguez, M., Barajas-Villarruel, L. R., Medell\'in-Carrillo, S., Gonz\'alez, L. T., et al. (2026). Persistent air pollution regimes and regulatory exceedances of PM$_{10}$, PM$_{2.5}$, and O$_3$ in the Monterrey Metropolitan Area, Mexico. \textit{City and Environment Interactions}, 31, 100410. doi:10.1016/j.cacint.2026.100410
+
+\bibitem{martinez_repo} Mart\'inez-Mart\'inez, J. (1998). \textit{Monterrey, Mexico ozone study: Air quality measurements and photochemical modeling} (Tesis doctoral). The University of Arizona. \url{http://hdl.handle.net/10150/282697}
+
+\bibitem{sima_ranges} SIMA (2026). \textit{Rangos de los par\'ametros del SIMA}. Documento proporcionado por el socio formador.
+
+\bibitem{sima_uanl} Contribuye UANL al monitoreo ambiental con renovaci\'on del SIMA. \textit{Vida Universitaria, UANL}. \url{https://vidauniversitaria.uanl.mx/sustentabilidad/contribuye-uanl-al-monitoreo-ambiental-con-renovacion-del-sima/}
+
+\bibitem{sima_nl} Gobierno de Nuevo Le\'on. Inauguran el nuevo C5 Ambiental; se fortalece la vigilancia del medio ambiente (bolet\'in). \url{https://www.nl.gob.mx/es/boletines/inauguran-samuel-y-mariana-el-nuevo-c5-ambiental-se-fortalece-la-vigilancia-del-medio}
+
+\bibitem{sima_abc} Nuevo Le\'on contar\'a con el sistema de monitoreo ambiental m\'as moderno del pa\'is (2025, 22 de septiembre). \textit{ABC Noticias}. \url{https://abcnoticias.mx/local/2025/9/22/nuevo-leon-contara-con-el-sistema-de-monitoreo-ambiental-mas-moderno-del-pais-258023.html}
+
+\end{thebibliography}
+
+\end{document}

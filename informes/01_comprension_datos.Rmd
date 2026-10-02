@@ -1,0 +1,247 @@
+---
+title: "SIMA Nuevo León 2020–2025: comprensión y calidad de los datos"
+lang: es
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+# El documento vive en informes/; las rutas se resuelven desde la raíz del proyecto
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(readxl)
+```
+
+Este documento reproduce la revisión inicial de las bases `BD_2020.xlsx` a `BD_2025.xlsx`. Es sólo diagnóstico: **no se modifica, excluye ni convierte ningún dato**. Cualquier decisión de limpieza queda pendiente para la fase siguiente.
+
+## 1. Lectura e integridad de las fuentes
+
+Se verifica la huella SHA-256 de cada libro contra `datos/manifiesto_fuentes.csv`.
+
+```{r integridad}
+archivos <- file.path("datos/originales", sprintf("BD_%d.xlsx", 2020:2025))
+manifiesto <- read.csv("datos/manifiesto_fuentes.csv")
+huellas <- unname(tools::sha256sum(archivos))
+data.frame(archivo = archivos,
+           coincide = huellas == manifiesto$sha256[match(archivos, manifiesto$archivo)])
+```
+
+Las mediciones se leen como texto para detectar celdas no numéricas; la fecha se lee como fecha-hora. Cada hoja es una estación y se agrega el año del libro.
+
+```{r lectura, cache=TRUE}
+leer_anio <- function(anio) {
+  f <- file.path("datos/originales", sprintf("BD_%d.xlsx", anio))
+  do.call(rbind, lapply(excel_sheets(f), function(h) {
+    d <- as.data.frame(read_excel(f, sheet = h, col_types = c("date", rep("text", 15)),
+                                  progress = FALSE))
+    names(d)[1] <- "fecha"
+    cbind(anio_libro = anio, estacion = h, d)
+  }))
+}
+bd <- do.call(rbind, lapply(2020:2025, leer_anio))
+
+vars <- c("CO", "NO", "NO2", "NOX", "O3", "PM10", "PM2.5",
+          "PRS", "RAINF", "RH", "SO2", "SR", "TOUT", "WSR", "WDR")
+num <- as.data.frame(lapply(bd[vars], function(x) suppressWarnings(as.numeric(x))))
+# Versión sin el centinela -9999, sólo para resúmenes de rango
+num_sc <- num
+num_sc[num_sc == -9999] <- NA
+```
+
+## 2. Dimensión
+
+```{r dimension}
+c(registros = nrow(bd), columnas = ncol(bd),
+  columnas_originales = ncol(bd) - 2, estaciones = nlevels(factor(bd$estacion)),
+  hojas = nrow(unique(bd[c("anio_libro", "estacion")])))
+```
+
+La tabla unificada tiene 16 columnas originales más `anio_libro` y `estacion`. La nota de `investigacion/exploracion_inicial.md` estimaba unas 754 954 filas; la lectura da el total anterior.
+
+Cada registro es una **hora** de una estación (aunque `Etiquetas.xlsx` habla de "promedios diarios").
+
+```{r tiempo}
+cat("Fechas NA:", sum(is.na(bd$fecha)), "\n")
+cat("Rango:", format(range(bd$fecha)), "\n")
+cat("Pasos entre horas distintas (min):\n")
+print(table(round(as.numeric(diff(sort(unique(bd$fecha))), units = "mins"))))
+cat("Marcas con minuto != 00:", sum(format(bd$fecha, "%M") != "00"), "\n")
+cat("Año de la fecha distinto del libro:", sum(format(bd$fecha, "%Y") != bd$anio_libro), "\n")
+cat("Duplicados estación + fecha:", sum(duplicated(bd[c("estacion", "fecha")])), "\n")
+cat("Filas totalmente duplicadas:", sum(duplicated(bd)), "\n")
+```
+
+Registros por año y estación:
+
+```{r cobertura}
+tab <- table(anio = bd$anio_libro, estacion = bd$estacion)
+tab
+```
+
+Horas faltantes respecto al calendario completo (negativo = faltan filas):
+
+```{r horas-faltantes}
+esperado <- ifelse(rownames(tab) %in% c("2020", "2024"), 8784, 8760)
+sweep(tab, 1, esperado, "-")
+```
+
+NE3 no tiene datos en 2020; NO3 no tiene en 2020–2021 y en 2022 sólo tiene 743 horas.
+
+## 3. Diccionario de variables
+
+Fuente: hoja `Variables` de `Etiquetas.xlsx`. Las unidades son las que indica el diccionario; no se verificó si ya se aplicaron conversiones.
+
+```{r diccionario}
+diccionario <- data.frame(
+  variable = c("fecha", "estacion", "anio_libro", vars),
+  descripcion = c("Marca temporal horaria (`Fecha y hora` en 2020–2024, `date` en 2025)",
+                  "Estación de monitoreo (nombre de la hoja)",
+                  "Año del libro de origen",
+                  "Monóxido de carbono", "Monóxido de nitrógeno", "Dióxido de nitrógeno",
+                  "NO + NO2", "Ozono", "Partículas < 10 µm", "Partículas < 2.5 µm",
+                  "Presión atmosférica", "Precipitación", "Humedad relativa",
+                  "Dióxido de azufre", "Radiación solar", "Temperatura",
+                  "Velocidad del viento", "Dirección del viento"),
+  unidad = c("", "", "", "ppm", "ppb", "ppb", "ppb", "ppb", "µg/m3", "µg/m3",
+             "mm Hg", "mm/h", "%", "ppb", "kW/m2", "°C", "km/h", "°"),
+  tipo = c("Fecha-hora", "Categórica (15 niveles)", "Categórica ordinal (2020–2025)",
+           rep("Numérica continua", 14), "Numérica circular (0–360)")
+)
+diccionario
+```
+
+Estaciones presentes en los datos: `r paste(sort(unique(bd$estacion)), collapse = ", ")`.
+
+Banderas descritas en `Etiquetas.xlsx` (hoja `Banderas`): P/p falla eléctrica, C/c calibración, D/d apagado, B/b malas condiciones (mayúscula = hora válida, minúscula = inválida), y m, l, z, o, s, r, e, a, f, h, n, x (inválidas). **Ninguna celda de medición contiene texto**, de modo que las banderas no aparecen en las bases; es probable, pero no está confirmado, que los valores inválidos ya estén vacíos.
+
+```{r texto-no-numerico}
+# Celdas con texto no numérico por variable
+colSums(!is.na(bd[vars]) & is.na(num))
+```
+
+## 4. Valores nulos
+
+```{r nulos-variable}
+nulos <- data.frame(variable = vars,
+                    n_nulos = colSums(is.na(num)),
+                    pct_nulos = round(100 * colMeans(is.na(num)), 2),
+                    row.names = NULL)
+nulos
+```
+
+```{r nulos-filas}
+c(filas_con_algun_nulo = sum(rowSums(is.na(num)) > 0),
+  filas_con_las_15_nulas = sum(rowSums(!is.na(num)) == 0))
+```
+
+Porcentaje de nulos por año:
+
+```{r nulos-anio}
+pa <- aggregate(as.data.frame(is.na(num)) * 100, list(anio = bd$anio_libro), mean)
+pa[-1] <- round(pa[-1])
+pa
+```
+
+Porcentaje de nulos por estación:
+
+```{r nulos-estacion}
+pe <- aggregate(as.data.frame(is.na(num)) * 100, list(estacion = bd$estacion), mean)
+pe[-1] <- round(pe[-1])
+pe
+```
+
+Combinaciones estación-año con **cero** datos en una variable (sensor sin información):
+
+```{r sensores-vacios}
+nn <- aggregate(as.data.frame(!is.na(num)), list(estacion = bd$estacion, anio = bd$anio_libro), sum)
+z <- which(nn[vars] == 0, arr.ind = TRUE)
+data.frame(estacion = nn$estacion[z[, 1]], anio = nn$anio[z[, 1]],
+           variable = vars[z[, 2]])[order(vars[z[, 2]]), ]
+```
+
+## 5. Distribución y valores sospechosos
+
+Resumen numérico (incluye el centinela −9999 donde aparezca):
+
+```{r resumen-numerico}
+resumen <- do.call(rbind, lapply(vars, function(v) {
+  x <- num[[v]]
+  data.frame(variable = v, min = min(x, na.rm = TRUE),
+             p1 = unname(quantile(x, .01, na.rm = TRUE)),
+             mediana = median(x, na.rm = TRUE), media = round(mean(x, na.rm = TRUE), 2),
+             p99 = unname(quantile(x, .99, na.rm = TRUE)), max = max(x, na.rm = TRUE),
+             n_cero = sum(x == 0, na.rm = TRUE), n_neg = sum(x < 0, na.rm = TRUE))
+}))
+resumen
+```
+
+Cuantiles sin el centinela:
+
+```{r cuantiles}
+round(t(sapply(num_sc, quantile, probs = c(0, .001, .01, .5, .99, .999, 1), na.rm = TRUE)), 3)
+```
+
+Centinela `-9999`:
+
+```{r centinela}
+s <- colSums(num == -9999, na.rm = TRUE)
+s[s > 0]
+```
+
+Chequeos de plausibilidad. Los umbrales son criterios de revisión de esta exploración, **no** límites normativos ni los rangos de operación del PDF de referencia (pendiente de cruzar):
+
+```{r plausibilidad}
+n <- num_sc
+chk <- c(
+  "RH > 100" = sum(n$RH > 100, na.rm = TRUE), "RH <= 0" = sum(n$RH <= 0, na.rm = TRUE),
+  "TOUT > 50" = sum(n$TOUT > 50, na.rm = TRUE), "TOUT < -5" = sum(n$TOUT < -5, na.rm = TRUE),
+  "WDR > 360" = sum(n$WDR > 360, na.rm = TRUE), "WSR > 100" = sum(n$WSR > 100, na.rm = TRUE),
+  "SR < 0" = sum(n$SR < 0, na.rm = TRUE), "SR > 1.5" = sum(n$SR > 1.5, na.rm = TRUE),
+  "PRS < 680" = sum(n$PRS < 680, na.rm = TRUE), "PRS == 0" = sum(n$PRS == 0, na.rm = TRUE),
+  "RAINF > 100" = sum(n$RAINF > 100, na.rm = TRUE),
+  "PM2.5 > PM10" = sum(n$PM2.5 > n$PM10, na.rm = TRUE),
+  "PM10 >= 900" = sum(n$PM10 >= 900, na.rm = TRUE),
+  "PM2.5 >= 500" = sum(n$PM2.5 >= 500, na.rm = TRUE),
+  "NOX < NO" = sum(n$NOX < n$NO - 0.5, na.rm = TRUE),
+  "NOX < NO + NO2 - 1" = sum(n$NOX < n$NO + n$NO2 - 1, na.rm = TRUE),
+  "CO > 15" = sum(n$CO > 15, na.rm = TRUE), "O3 > 200" = sum(n$O3 > 200, na.rm = TRUE),
+  "SO2 > 100" = sum(n$SO2 > 100, na.rm = TRUE), "NO2 > 150" = sum(n$NO2 > 150, na.rm = TRUE),
+  "NO2 == 0" = sum(n$NO2 == 0, na.rm = TRUE), "CO == 0" = sum(n$CO == 0, na.rm = TRUE),
+  "PM2.5 == 0" = sum(n$PM2.5 == 0, na.rm = TRUE))
+data.frame(criterio = names(chk), casos = unname(chk))
+```
+
+Dónde se concentran algunos de estos casos (estación y año):
+
+```{r concentracion}
+donde <- function(cond, nombre) {
+  i <- which(cond)
+  cat("\n", nombre, "(", length(i), "casos )\n")
+  print(head(sort(table(paste(bd$estacion[i], bd$anio_libro[i])), decreasing = TRUE), 5))
+}
+donde(n$TOUT < -5 & !is.na(n$TOUT), "TOUT < -5")
+donde(n$WSR > 100 & !is.na(n$WSR), "WSR > 100")
+donde(n$SR > 1.5 & !is.na(n$SR), "SR > 1.5")
+donde(n$RH > 100 & !is.na(n$RH), "RH > 100")
+```
+
+Valores máximos más altos (posibles topes de instrumento o errores de escala):
+
+```{r maximos}
+sapply(c("PM10", "PM2.5", "RAINF", "WSR", "TOUT", "RH", "SR", "CO", "SO2"),
+       function(v) paste(head(sort(n[[v]], decreasing = TRUE), 5), collapse = ", "))
+```
+
+## 6. Hallazgos y puntos pendientes
+
+- La base es horaria, con 15 estaciones y sin duplicados de estación y fecha.
+- 2020 concentra los mayores porcentajes de nulos en gases (NO2, NOX, NO, O3, CO, SO2); `PM2.5` tiene la mayor proporción de nulos global y empeora de 2022 a 2025.
+- Hay sensores completamente vacíos en algunas combinaciones estación-año (ver sección 4).
+- Hay un centinela `-9999` en 7 variables y valores físicamente implausibles (`TOUT`, `RH`, `SR`, `WSR`, `PRS`, `RAINF`), varios concentrados en pocas estación-año, lo que sugiere fallas de sensor.
+- Inconsistencias entre variables: `PM2.5 > PM10`, y `NOX` menor que `NO + NO2` en muchos registros aunque el diccionario lo define como su suma.
+- Diccionario: `SE` aparece dos veces (Sureste y Sur) y los datos usan `SUR`; faltan NE3 y NO3; la columna `RAINF` tiene una conversión descrita cuyo estado se desconoce; `Etiquetas.xlsx` dice "promedios diarios" pero los datos son horarios.
+
+Pendientes: cruzar con los rangos de operación del PDF, confirmar con la fuente si los vacíos corresponden a valores invalidados por bandera, y decidir y documentar las reglas de limpieza.

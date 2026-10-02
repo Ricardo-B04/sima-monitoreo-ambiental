@@ -1,0 +1,606 @@
+---
+title: "SIMA Nuevo León 2020–2025: preparación y transformación de los datos"
+lang: es
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+# El documento vive en informes/; las rutas se resuelven desde la raíz del proyecto
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(readxl)
+```
+
+Este documento continúa a `01_comprension_datos.Rmd` y documenta en código cada decisión de selección y limpieza. Los libros originales **no se modifican**: toda la limpieza ocurre en memoria y cada regla queda contabilizada en una bitácora (sección 4.2). Las decisiones se apoyan en el borrador del Entregable 1 (pregunta de investigación y objetivos), en `investigacion/decisiones.md` y en el documento de rangos de operación de SIMA (`referencias/originales/rangos_parametros_SIMA.pdf`).
+
+## 1. Lectura de las fuentes
+
+Se lee igual que en el diagnóstico: mediciones como texto (para detectar celdas no numéricas) y fecha como fecha-hora, una hoja por estación.
+
+```{r lectura, cache=TRUE}
+leer_anio <- function(anio) {
+  f <- file.path("datos/originales", sprintf("BD_%d.xlsx", anio))
+  do.call(rbind, lapply(excel_sheets(f), function(h) {
+    d <- as.data.frame(read_excel(f, sheet = h, col_types = c("date", rep("text", 15)),
+                                  progress = FALSE))
+    names(d)[1] <- "fecha"
+    cbind(anio_libro = anio, estacion = h, d)
+  }))
+}
+bd <- do.call(rbind, lapply(2020:2025, leer_anio))
+
+vars <- c("CO", "NO", "NO2", "NOX", "O3", "PM10", "PM2.5",
+          "PRS", "RAINF", "RH", "SO2", "SR", "TOUT", "WSR", "WDR")
+datos <- cbind(bd[c("anio_libro", "estacion", "fecha")],
+               as.data.frame(lapply(bd[vars], function(x) suppressWarnings(as.numeric(x)))))
+c(registros = nrow(datos), columnas = ncol(datos))
+```
+
+## 2. Selección del conjunto de datos
+
+### 2.1 Periodo y estaciones
+
+- **Periodo: 2020–2025.** Son los libros disponibles en `datos/originales/`, y corresponden a años completos. Se decidió no incorporar el año parcial de 2026 (enero–julio); si más adelante se agrega `BD_2026.xlsx`, bastaría con extender la lectura, la rejilla horaria y el manifiesto.
+- **2020 se conserva en la depuración pero se marca fuera de los modelos** (columna `modelado`), según la propuesta de `decisiones.md`: tiene la mayor proporción de nulos en gases y varias estaciones sin sensor (ver sección 4.3).
+- **Las 15 estaciones se conservan.** La pregunta de investigación es de red y el objetivo 2 pide caracterizar la variación entre estaciones. Excluir estaciones completas por tener huecos sería perder justamente esa comparación; los huecos se tratan por variable y día (sección 4.3).
+
+### 2.2 Variables
+
+La pregunta de investigación relaciona el ozono con sus precursores (NO, NO2, NOX) y la meteorología (temperatura, radiación solar, viento, humedad y presión). Con ese criterio:
+
+```{r seleccion-tabla}
+nulos_orig <- colMeans(is.na(datos[vars])) * 100
+sel <- data.frame(
+  variable = vars,
+  pct_nulos_originales = round(unname(nulos_orig[vars]), 1),
+  decision = ifelse(vars %in% c("O3", "NO", "NO2", "NOX", "TOUT", "SR", "WSR", "WDR", "RH", "PRS"),
+                    "Incluir", "Excluir (primera versión)")
+)
+sel$rol <- c(CO = "Contaminante no central", NO = "Precursor", NO2 = "Precursor",
+             NOX = "Precursor (redundante con NO + NO2)", O3 = "Objetivo",
+             PM10 = "Contaminante no central", PM2.5 = "Contaminante no central",
+             PRS = "Meteorológica", RAINF = "Meteorológica secundaria", RH = "Meteorológica",
+             SO2 = "Contaminante no central", SR = "Meteorológica", TOUT = "Meteorológica",
+             WSR = "Meteorológica", WDR = "Meteorológica (circular)")[vars]
+sel[order(sel$decision, sel$rol), c("variable", "rol", "decision", "pct_nulos_originales")]
+```
+
+| Variable(s) | Decisión | Motivo |
+|---|---|---|
+| `O3` | Incluir (objetivo) | Es el eje de la pregunta y de los objetivos 2–5. |
+| `NO`, `NO2` | Incluir | Precursores directos del ozono. |
+| `NOX` | Incluir con reserva | El diccionario la define como NO + NO2, así que aporta información redundante; en modelos se usará `NOX` **o** el par `NO`/`NO2`, no las tres a la vez (multicolinealidad). |
+| `TOUT`, `SR`, `WSR`, `WDR`, `RH`, `PRS` | Incluir | Controlan la formación y dispersión del ozono (borrador del Entregable 1). |
+| `PM10`, `PM2.5` | Excluir en la primera versión | No son centrales para la pregunta. `PM2.5` además tiene la mayor proporción de nulos de la red (ver tabla) y está casi vacía en NE3 y NO3. |
+| `SO2`, `CO` | Excluir en la primera versión | No son centrales y, según la literatura local citada en el borrador, se mantienen dentro de norma. |
+| `RAINF` | Excluir en la primera versión | Variable secundaria, con conversión de unidades de estado desconocido (ver `01_comprension_datos.Rmd`). |
+
+La exclusión es **de la base de análisis, no de la limpieza**: las 15 variables se limpian con las mismas reglas y la bitácora las incluye, de modo que reincorporar alguna no exige rehacer el proceso.
+
+## 3. Columnas objetivo
+
+El borrador define dos objetivos de modelado:
+
+1. **`O3` continua** (objetivo 4: regresión lineal múltiple en función de precursores y meteorología).
+2. **`excedencia` binaria** por estación-día (objetivo 5: análisis discriminante, con regresión logística como comparación): vale "Sí" si el **máximo diario de la media móvil de 8 h** de ozono supera el umbral.
+
+Sobre el umbral, el borrador plantea comparar los de 2024 y 2026. Como la norma endurece el límite dentro del periodo (0.065 → 0.060 → 0.051 ppm), usar el vigente en cada año haría que las excedencias no fueran comparables entre años. Se fijan, por tanto, **dos criterios constantes para todo el periodo**: 60 ppb (nivel 2024–2025) y 51 ppb (nivel 2026). Los umbrales por año y su correspondencia con la NOM-020-SSA1-2021 siguen **pendientes de verificar** (`decisiones.md`); no se usan 90 ppb (1 h) ni 70 ppb (8 h).
+
+Reglas de construcción (las más habituales para este indicador, pero ajustables):
+
+- Media móvil de 8 h **hacia atrás** (ventana que termina en la hora), calculada sólo si hay al menos 6 de las 8 horas válidas.
+- Se asigna al día en que termina la ventana y se toma el máximo diario.
+- El día es válido para ozono con al menos 75 % de horas válidas (18 de 24), el criterio propuesto en `decisiones.md`.
+
+La construcción se hace en la sección 4.3, una vez limpias las series, porque depende de ellas.
+
+## 4. Limpieza de datos
+
+### 4.1 Duplicados
+
+```{r duplicados}
+c(filas_completamente_duplicadas = sum(duplicated(datos)),
+  duplicados_estacion_fecha = sum(duplicated(datos[c("estacion", "fecha")])),
+  fechas_NA = sum(is.na(datos$fecha)),
+  minuto_distinto_de_00 = sum(format(datos$fecha, "%M") != "00"),
+  anio_fecha_distinto_del_libro = sum(format(datos$fecha, "%Y") != datos$anio_libro))
+```
+
+La llave de unicidad es estación + fecha-hora. Se eliminan duplicados por esa llave (conservando la primera aparición) y se ordena por estación y fecha, que es lo que necesitan las reglas que dependen de la secuencia.
+
+```{r duplicados-quitar}
+n_antes <- nrow(datos)
+datos <- datos[!duplicated(datos[c("estacion", "fecha")]), ]
+datos <- datos[order(datos$estacion, datos$fecha), ]
+rownames(datos) <- NULL
+c(filas_eliminadas = n_antes - nrow(datos), filas_restantes = nrow(datos))
+```
+
+### 4.2 Valores espurios o erróneos
+
+Las reglas se aplican **en este orden**, y la bitácora cuenta sólo los valores que cada regla invalida (es decir, que seguían presentes al llegar a ella). Un valor espurio se reemplaza por `NA`; no se corrige ni se sustituye.
+
+1. **Centinela `-9999`** → `NA`.
+2. **Rango de operación por año y parámetro**, transcrito del PDF de SIMA a `datos/rangos_operacion_SIMA.csv`. El documento usa `WS`, `TEMP`, `BP` y `WD` donde la base usa `WSR`, `TOUT`, `PRS` y `WDR`. Esta regla cubre también las notas del PDF para 2020 (`WS` > 75 km/h, `SR` fuera de rango, `BP` fuera de rango) y 2021 (`NO` sobre el máximo, `SR` sobre el rango). La nota "2020, O3: omitir máximo de NTE2" queda cubierta porque el máximo de esa estación (159 ppb) supera el límite de 153 ppb. **Excepción: `PRS`**, ver más abajo.
+3. **`RH` exactamente 0 %**: físicamente implausible para humedad ambiente y no se distingue de un sensor apagado.
+4. **Rachas de 24 h o más con el mismo valor** (misma estación, valores consecutivos), en todas las variables salvo `SR` y `RAINF`, donde el cero repetido es normal. Se detectó, por ejemplo, `NO2` fija en 0.5 ppb hasta 744 h seguidas, lo que corresponde a un sensor apagado o a un valor de relleno y no a una medición.
+
+**Excepción para `PRS`.** El rango del PDF es único para toda la red, pero la presión depende de la altitud de cada estación. Algunas estaciones tienen medianas de ~701 mmHg (NO2, SO) y otra de ~731 mmHg (SE3), de forma estable entre años; con el rango del PDF (por ejemplo 700–740 en 2022) se descartarían miles de lecturas de esas estaciones (más de 3 000 horas de NO2 solo en 2022), que no tienen aspecto de falla. Se usa en su lugar un rango físico amplio, **680–760 mmHg**, y se conserva el criterio del PDF sólo como referencia.
+
+```{r rangos}
+rangos <- read.csv("datos/rangos_operacion_SIMA.csv")
+limpio <- datos
+bitacora <- list()
+
+aplicar <- function(regla, v, cond) {
+  cond <- cond & !is.na(limpio[[v]])
+  bitacora[[length(bitacora) + 1L]] <<- data.frame(regla = regla, variable = v, n = sum(cond))
+  limpio[[v]][cond] <<- NA
+}
+
+racha_larga <- function(x, g, k = 24) {
+  n <- length(x)
+  nuevo <- c(TRUE, x[-1] != x[-n] | g[-1] != g[-n])
+  nuevo[is.na(nuevo)] <- TRUE
+  id <- cumsum(nuevo)
+  tabulate(id)[id] >= k
+}
+
+# Cuántas lecturas caen fuera del rango del PDF para PRS (informativo, no se eliminan)
+r_prs <- rangos[rangos$variable == "PRS", ]
+k_prs <- match(datos$anio_libro, r_prs$anio)
+prs_fuera_pdf <- sum(datos$PRS > -9999 & (datos$PRS < r_prs$min[k_prs] | datos$PRS > r_prs$max[k_prs]),
+                     na.rm = TRUE)
+
+for (v in vars) aplicar("1. Centinela -9999", v, limpio[[v]] == -9999)
+
+for (v in setdiff(vars, "PRS")) {
+  r <- rangos[rangos$variable == v, ]
+  k <- match(limpio$anio_libro, r$anio)
+  aplicar("2. Fuera del rango de operación (PDF)", v, limpio[[v]] < r$min[k] | limpio[[v]] > r$max[k])
+}
+aplicar("2b. PRS fuera de 680-760 mmHg", "PRS", limpio$PRS < 680 | limpio$PRS > 760)
+
+aplicar("3. RH exactamente 0", "RH", limpio$RH == 0)
+
+for (v in setdiff(vars, c("SR", "RAINF"))) {
+  aplicar("4. Racha >= 24 h con el mismo valor", v, racha_larga(limpio[[v]], limpio$estacion))
+}
+```
+
+Bitácora de valores invalidados por regla y variable:
+
+```{r bitacora}
+bitacora <- do.call(rbind, bitacora)
+bitacora$regla <- factor(bitacora$regla, levels = unique(bitacora$regla))
+m <- unclass(xtabs(n ~ regla + variable, bitacora))[, vars]
+data.frame(regla = rownames(m), m, check.names = FALSE, row.names = NULL)
+```
+
+`PRS` tenía `r prs_fuera_pdf` lecturas fuera del rango del PDF; con el rango físico ampliado sólo se invalidan las que muestra la tabla.
+
+**Inconsistencia NOX vs NO + NO2.** El diccionario define `NOX` como la suma de ambos, pero la diferencia es pequeña en la mayoría de los registros y grande en unos pocos. No se recalcula ni se elimina `NOX`: se marca con `flag_NOX` los registros con diferencia absoluta mayor a 2 ppb (tolerancia de redondeo y de calibración entre analizadores) para poder excluirlos o revisarlos después.
+
+```{r nox}
+dif <- limpio$NOX - (limpio$NO + limpio$NO2)
+limpio$flag_NOX <- !is.na(dif) & abs(dif) > 2
+c(registros_comparables = sum(!is.na(dif)), marcados = sum(limpio$flag_NOX),
+  pct = round(100 * mean(limpio$flag_NOX[!is.na(dif)]), 2))
+quantile(dif, c(.01, .05, .5, .95, .99), na.rm = TRUE)
+```
+
+### 4.3 Valores faltantes
+
+**Decisión: no se imputan valores en esta etapa.** Las razones son:
+
+- La falta de datos no es aleatoria: se concentra en estación-años completos (sensor apagado o sin instalar) y en 2020. Imputar series horarias enteras con modelos o interpolación inventaría información.
+- El ozono es la variable objetivo; imputarla y luego modelarla es circular.
+- Las medias móviles y los máximos diarios ya incorporan reglas de cobertura (75 % de horas), que sí controlan los huecos aislados.
+
+Para el análisis multivariado se trabajará con **casos completos a nivel estación-día**. A continuación se cuantifica qué parte de los datos sobrevive a esa regla.
+
+Porcentaje de horas sin dato antes y después de la limpieza, por variable:
+
+```{r nulos-antes-despues}
+antes <- colMeans(is.na(datos[vars])) * 100
+despues <- colMeans(is.na(limpio[vars])) * 100
+data.frame(variable = vars, pct_antes = round(unname(antes), 2),
+           pct_despues = round(unname(despues), 2),
+           pct_invalidado_por_limpieza = round(unname(despues - antes), 2))
+```
+
+Cobertura horaria de ozono por estación y año (% de horas con dato válido):
+
+```{r cobertura-o3}
+cob <- round(100 * tapply(!is.na(limpio$O3), list(limpio$estacion, limpio$anio_libro), mean), 0)
+data.frame(estacion = rownames(cob), cob, check.names = FALSE, row.names = NULL)
+```
+
+Ahora se construye la rejilla horaria completa por estación (para que la media móvil use horas consecutivas reales aun si faltan filas), se calcula el máximo diario de la media móvil de 8 h y se cuentan las horas válidas de cada variable por día.
+
+```{r diario}
+vars_sel <- c("O3", "NO", "NO2", "NOX", "TOUT", "SR", "WSR", "WDR", "RH", "PRS")
+horas <- seq(as.POSIXct("2020-01-01 00:00:00", tz = "UTC"),
+             as.POSIXct("2025-12-31 23:00:00", tz = "UTC"), by = "hour")
+dias <- as.Date(horas[seq(1, length(horas), by = 24)], tz = "UTC")
+
+# Todas las filas deben caer en la rejilla horaria
+stopifnot(all(as.numeric(limpio$fecha) %in% as.numeric(horas)))
+
+media_movil_8h <- function(x, min_validas = 6) {
+  v <- !is.na(x)
+  s <- stats::filter(replace(x, !v, 0), rep(1, 8), sides = 1)
+  n <- stats::filter(as.numeric(v), rep(1, 8), sides = 1)
+  as.numeric(ifelse(n >= min_validas, s / n, NA))
+}
+
+diario <- do.call(rbind, lapply(sort(unique(limpio$estacion)), function(e) {
+  d <- limpio[limpio$estacion == e, ]
+  pos <- match(as.numeric(horas), as.numeric(d$fecha))
+  out <- data.frame(estacion = e, dia = dias)
+  for (v in vars_sel) {
+    out[[paste0("n_", v)]] <- colSums(!is.na(matrix(d[[v]][pos], nrow = 24)))
+  }
+  m8 <- matrix(media_movil_8h(d$O3[pos]), nrow = 24)
+  out$o3_max8 <- apply(m8, 2, function(z) if (all(is.na(z))) NA_real_ else max(z, na.rm = TRUE))
+  out
+}))
+diario$anio <- as.integer(format(diario$dia, "%Y"))
+
+diario$valido_o3 <- diario$n_O3 >= 18 & !is.na(diario$o3_max8)
+diario$o3_max8[!diario$valido_o3] <- NA
+n_cols <- paste0("n_", vars_sel)
+diario$completo <- Reduce(`&`, lapply(n_cols, function(cn) diario[[cn]] >= 18)) & diario$valido_o3
+dim(diario)
+```
+
+Porcentaje de estación-días con al menos 18 horas válidas, por variable y año (el denominador son todos los días de las 15 estaciones), y estación-días con **todas** las variables válidas:
+
+```{r cobertura-diaria}
+pct_dia <- sapply(c(setNames(n_cols, vars_sel)), function(cn) {
+  round(100 * tapply(diario[[cn]] >= 18, diario$anio, mean), 1)
+})
+data.frame(anio = rownames(pct_dia), pct_dia,
+           todas_las_variables = round(100 * tapply(diario$completo, diario$anio, mean), 1),
+           row.names = NULL)
+```
+
+Lectura: 2020 es el año más afectado (los casos completos son una fracción pequeña), lo que respalda dejarlo fuera de los modelos. Aun en 2021–2025 sólo entre ~60 % y ~81 % de los estación-días tienen todas las variables válidas, porque los huecos de cada variable no coinciden: en 2021 pesan los gases y en 2025 `NO`, `NO2`, `NOX` y `RH`. Al modelar conviene evaluar si algún par estación-año con cobertura muy baja (por ejemplo, NO3, con menos de la mitad de los días de ozono válidos de otras estaciones) debe excluirse, y comprobar que los casos completos no sesgan la composición por estación.
+
+### 4.4 Variable objetivo: excedencias de ozono
+
+```{r excedencia}
+diario$exc_60 <- factor(ifelse(diario$o3_max8 > 60, "Sí", "No"), levels = c("No", "Sí"))
+diario$exc_51 <- factor(ifelse(diario$o3_max8 > 51, "Sí", "No"), levels = c("No", "Sí"))
+
+res_anio <- do.call(rbind, lapply(split(diario, diario$anio), function(d) {
+  data.frame(anio = d$anio[1], dias_estacion_posibles = nrow(d),
+             dias_validos_o3 = sum(d$valido_o3),
+             pct_validos = round(100 * mean(d$valido_o3), 1),
+             exc_60ppb = sum(d$exc_60 == "Sí", na.rm = TRUE),
+             pct_exc_60 = round(100 * mean(d$exc_60 == "Sí", na.rm = TRUE), 1),
+             exc_51ppb = sum(d$exc_51 == "Sí", na.rm = TRUE),
+             pct_exc_51 = round(100 * mean(d$exc_51 == "Sí", na.rm = TRUE), 1))
+}))
+rownames(res_anio) <- NULL
+res_anio
+```
+
+Por estación (2021–2025, el periodo previsto para modelar):
+
+```{r excedencia-estacion}
+d2 <- diario[diario$anio >= 2021 & diario$valido_o3, ]
+res_est <- do.call(rbind, lapply(split(d2, d2$estacion), function(d) {
+  data.frame(estacion = d$estacion[1], dias_validos = nrow(d),
+             exc_60ppb = sum(d$exc_60 == "Sí"), pct_60 = round(100 * mean(d$exc_60 == "Sí"), 1),
+             exc_51ppb = sum(d$exc_51 == "Sí"), pct_51 = round(100 * mean(d$exc_51 == "Sí"), 1))
+}))
+rownames(res_est) <- NULL
+res_est
+```
+
+Implicaciones para el modelado: la clase "Sí" es minoritaria con el criterio de 60 ppb (alrededor de 13 % a 25 % de los días válidos según el año) y su frecuencia varía mucho entre estaciones (de ~4 % en NE2 a ~26 % en NO y SO en 2021–2025), así que habrá que reportar sensibilidad y especificidad (no sólo exactitud) y considerar las probabilidades previas en el discriminante. Con el criterio de 51 ppb el balance mejora, pero no es comparable con la norma de 2024–2025. La proporción de excedencias sube en 2024 y 2025, pero la cobertura y las estaciones válidas también cambian entre años, de modo que no debe leerse como tendencia sin controlar la meteorología (justo lo que plantea la justificación del borrador).
+
+### 4.5 Variables categóricas y variables *dummy*
+
+```{r categoricas}
+limpio$estacion <- factor(limpio$estacion)
+data.frame(
+  variable = c("estacion", "anio_libro", "excedencia (exc_60, exc_51)", "WDR"),
+  tipo = c("Nominal, 15 niveles", "Ordinal / temporal (2020–2025)", "Binaria (creada)",
+           "Numérica circular (0–360°), no categórica"),
+  niveles = c(nlevels(limpio$estacion), 6, 2, NA)
+)
+levels(limpio$estacion)
+```
+
+Los nombres de estación son consistentes (sin espacios ni variantes de mayúsculas). Se conserva `SUR` como en los datos, aunque el diccionario lo llame `SE`.
+
+**Cuándo hacen falta variables *dummy*** (codificación de $k$ niveles en $k-1$ columnas 0/1, con un nivel de referencia):
+
+| Técnica | ¿Dummies de `estacion`? | Razón |
+|---|---|---|
+| PCA y conglomerados | No | Operan sobre variables numéricas continuas; las estaciones son los objetos que se agrupan (o una etiqueta para interpretar), no variables. Los 0/1 distorsionarían las distancias y la varianza. |
+| Análisis discriminante | No | Supone predictores continuos con distribución aproximadamente normal. Las estaciones, si se necesitan, se usan para estratificar o comparar, no como predictores. |
+| Regresión lineal múltiple y logística | Sí, si se quiere controlar el efecto de estación | Los métodos aceptan predictores categóricos; $R$ las construye con `model.matrix()` o directamente con `factor`. |
+
+Por eso **la base de análisis conserva `estacion` como factor** y las dummies se generan al ajustar los modelos de regresión, no antes. Ejemplo del resultado (referencia: `CE`, el primer nivel alfabético):
+
+```{r dummies}
+base_analisis_ej <- limpio[limpio$anio_libro >= 2021, c("estacion", "O3")]
+colnames(model.matrix(~ estacion, data = base_analisis_ej))
+```
+
+`WDR` no se trata como categórica ni con dummies: es una variable circular (0° y 360° son lo mismo), y su tratamiento correcto (componentes seno/coseno o componentes $u$/$v$ del viento con `WSR`) pertenece al paso de transformación.
+
+### 4.6 Valores atípicos (*outliers*)
+
+Los valores **imposibles** ya se trataron como espurios (sección 4.2). Lo que queda son valores extremos *plausibles* dentro del rango del instrumento. Se miden con el criterio de Tukey (más de 3 rangos intercuartílicos fuera de los cuartiles) sobre las horas válidas:
+
+```{r atipicos}
+atip <- do.call(rbind, lapply(vars_sel, function(v) {
+  x <- limpio[[v]][!is.na(limpio[[v]])]
+  q <- quantile(x, c(.25, .75)); iqr <- diff(q)
+  data.frame(variable = v, n = length(x), mediana = round(median(x), 2),
+             p99.9 = round(unname(quantile(x, .999)), 2), maximo = max(x),
+             n_extremos_sup = sum(x > q[2] + 3 * iqr), n_extremos_inf = sum(x < q[1] - 3 * iqr),
+             pct_extremos = round(100 * mean(x > q[2] + 3 * iqr | x < q[1] - 3 * iqr), 2))
+}))
+atip
+```
+
+```{r boxplots, fig.height=5, fig.width=10}
+set.seed(5821)
+op <- par(mfrow = c(2, 5), mar = c(2, 3, 3, 1))
+for (v in vars_sel) {
+  x <- limpio[[v]][!is.na(limpio[[v]])]
+  boxplot(sample(x, min(length(x), 50000)), main = v, pch = ".", col = "grey90")
+}
+par(op)
+```
+
+**Decisión: no se eliminan ni se recortan (*winsorizing*) los extremos plausibles.**
+
+- En `O3`, `NO`, `NO2` y `NOX` la asimetría a la derecha es la forma natural de la distribución (picos de tráfico y episodios de ozono), y los episodios altos de ozono son precisamente lo que se quiere clasificar. Quitarlos sesgaría el objetivo 5.
+- Su efecto sobre métodos sensibles (PCA, discriminante, regresión) se controlará en la **transformación**, con transformaciones que reducen la asimetría (por ejemplo logaritmo o raíz cuadrada en los gases) y, si hace falta, con diagnósticos de influencia en los modelos.
+- Para las variables meteorológicas, los extremos dentro del rango físico se mantienen.
+- Quedan para el análisis multivariado la detección de atípicos multivariados a nivel diario (distancia de Mahalanobis robusta) y la revisión de los casos influyentes.
+
+## 5. Transformación de datos
+
+La unidad de análisis de los objetivos 2–5 es la **estación-día** (máximo diario de la media móvil de 8 h, tipologías diarias), no la hora. Por eso la transformación empieza agregando las series horarias limpias a nivel diario y construyendo los atributos derivados; luego se decide sobre discretización y escalamiento con base en la distribución de las variables ya agregadas.
+
+### 5.1 Atributos derivados
+
+Se construyen sobre las horas válidas de cada estación-día; **un valor diario es `NA` si hay menos de 18 horas válidas** (la misma regla de 75 %). Atributos y justificación:
+
+- **Componentes del viento `U_media` y `V_media`.** `WDR` es circular (0° = 360°), por lo que promediarla o usarla como numérica produce valores sin sentido. Se descompone cada hora en $u=-\mathrm{WSR}\,\sin(\mathrm{WDR})$ y $v=-\mathrm{WSR}\,\cos(\mathrm{WDR})$ (convención meteorológica: `WDR` es la dirección *de la que* sopla el viento) y se promedian los componentes. Esto sustituye a `WDR` en los análisis, con lo que no hacen falta dummies de sectores.
+- **`TOUT_max` y `TOUT_media`.** El ozono responde a la temperatura diurna máxima; se conservan ambas para comparar, aunque están muy correlacionadas.
+- **`NOX_manana`.** Media de `NOX` entre las 06 y las 09 h (al menos 3 de 4 horas válidas): los precursores emitidos por el tráfico de la mañana son los que alimentan la formación fotoquímica de la tarde. Es una hipótesis del dominio, no un resultado de este análisis.
+- **`SR_media`, `WSR_media`, `RH_media`, `PRS_media`.** Medias diarias.
+- **`NO_media`, `NO2_media`, `NOX_media`.** Medias diarias de los precursores.
+- **`O3_prev`.** Máximo de 8 h del día anterior en la misma estación (persistencia de episodios). Es un predictor legítimo (se conoce antes del día modelado), pero se debe decidir si se usa, porque introduce dependencia temporal.
+- **Calendario:** `mes`, `temporada` (primavera: mar–may, verano: jun–ago, otoño: sep–nov, invierno: dic–feb), `fin_semana` (proxy de tráfico) y la fecha como ciclo anual `doy_sin`/`doy_cos`, que evita el salto artificial entre diciembre y enero.
+
+```{r atributos}
+limpio$u <- -limpio$WSR * sin(limpio$WDR * pi / 180)
+limpio$v <- -limpio$WSR * cos(limpio$WDR * pi / 180)
+
+dia_agr <- function(x, tipo, filas = 1:24, min_v = 18) {
+  m <- matrix(x, nrow = 24)[filas, , drop = FALSE]
+  n <- colSums(!is.na(m))
+  r <- if (tipo == "media") colMeans(m, na.rm = TRUE) else
+    apply(m, 2, function(z) if (all(is.na(z))) NA_real_ else max(z, na.rm = TRUE))
+  ifelse(n >= min_v, r, NA_real_)
+}
+
+atributos <- do.call(rbind, lapply(levels(limpio$estacion), function(s) {
+  d <- limpio[limpio$estacion == s, ]
+  pos <- match(as.numeric(horas), as.numeric(d$fecha))
+  g <- function(v) d[[v]][pos]
+  data.frame(
+    estacion = s, dia = dias,
+    NO_media = dia_agr(g("NO"), "media"), NO2_media = dia_agr(g("NO2"), "media"),
+    NOX_media = dia_agr(g("NOX"), "media"),
+    # Horas 06-09 (filas 7:10 de cada día); se exigen 3 de 4
+    NOX_manana = dia_agr(g("NOX"), "media", filas = 7:10, min_v = 3),
+    TOUT_media = dia_agr(g("TOUT"), "media"), TOUT_max = dia_agr(g("TOUT"), "max"),
+    RH_media = dia_agr(g("RH"), "media"), PRS_media = dia_agr(g("PRS"), "media"),
+    SR_media = dia_agr(g("SR"), "media"), WSR_media = dia_agr(g("WSR"), "media"),
+    U_media = dia_agr(g("u"), "media"), V_media = dia_agr(g("v"), "media"))
+}))
+
+base_diaria <- merge(
+  diario[c("estacion", "dia", "anio", "o3_max8", "valido_o3", "exc_60", "exc_51")],
+  atributos, by = c("estacion", "dia"))
+names(base_diaria)[names(base_diaria) == "o3_max8"] <- "O3_max8"
+base_diaria$O3_prev <- ave(base_diaria$O3_max8, base_diaria$estacion,
+                           FUN = function(z) c(NA, z[-length(z)]))
+
+mes <- as.integer(format(base_diaria$dia, "%m"))
+doy <- as.integer(format(base_diaria$dia, "%j"))
+base_diaria$mes <- factor(mes, levels = 1:12)
+base_diaria$temporada <- factor(
+  ifelse(mes %in% c(3, 4, 5), "Primavera", ifelse(mes %in% 6:8, "Verano",
+         ifelse(mes %in% 9:11, "Otoño", "Invierno"))),
+  levels = c("Primavera", "Verano", "Otoño", "Invierno"))
+base_diaria$fin_semana <- as.integer(format(base_diaria$dia, "%u")) >= 6
+base_diaria$doy_sin <- sin(2 * pi * doy / 365.25)
+base_diaria$doy_cos <- cos(2 * pi * doy / 365.25)
+base_diaria$modelado <- base_diaria$anio >= 2021
+dim(base_diaria)
+```
+
+### 5.2 Discretización (*binning*)
+
+**No es necesaria para los predictores.** El PCA, los conglomerados, la regresión lineal, la regresión logística y el discriminante trabajan con variables continuas; agrupar `TOUT`, `NO2` o `SR` en intervalos descartaría información y obligaría a elegir cortes arbitrarios sin ganancia en esos métodos. La única discretización del proyecto es la del **objetivo**, que ya se hizo en la sección 4.4 (`exc_60`, `exc_51`) con un criterio normativo, no estadístico. `temporada` es categórica pero se deriva del calendario y sirve para describir y, si se quiere, como factor en la regresión; no reemplaza a la variable continua del ciclo anual.
+
+### 5.3 Normalización y escalamiento
+
+Primero se revisa la forma de las distribuciones diarias (2021–2025, estación-días con dato). Un valor de asimetría cercano a 0 indica simetría; en valor absoluto, más de ~1 suele considerarse marcado.
+
+```{r asimetria}
+asim <- function(x) { x <- x[!is.na(x)]; mean((x - mean(x))^3) / sd(x)^3 }
+cand <- c("O3_max8", "NO_media", "NO2_media", "NOX_media", "NOX_manana", "TOUT_media", "TOUT_max",
+          "RH_media", "PRS_media", "SR_media", "WSR_media", "U_media", "V_media")
+bm <- base_diaria[base_diaria$modelado, ]
+data.frame(variable = cand,
+           asimetria_cruda = sapply(cand, \(v) round(asim(bm[[v]]), 2)),
+           asimetria_log1p = sapply(cand, \(v) round(asim(log1p(pmax(bm[[v]], 0))), 2)),
+           row.names = NULL)
+```
+
+(`log1p` sólo se evalúa en variables no negativas; para `U_media` y `V_media` no aplica y se ignora la segunda columna, y para `TOUT`, `RH`, `PRS` el logaritmo no tiene justificación física.)
+
+**Decisiones:**
+
+- **Transformación logarítmica `log1p`** para `NO_media`, `NO2_media`, `NOX_media` y `NOX_manana`: su asimetría cruda es alta (de ~1.4 a ~4) y baja a menos de 1 en valor absoluto. Se usa `log1p` y no `log` porque hay valores cercanos a 0.
+- **`O3_max8` se deja en su escala original**: su asimetría es moderada (~0.6) y mantenerla en ppb conserva la comparación directa con los umbrales de 60 y 51 ppb. Un `log` la volvería asimétrica hacia el otro lado.
+- **`TOUT`, `RH`, `PRS`, `SR`, `WSR`, `U`, `V`: sin transformación.** `TOUT_media`, `TOUT_max` y `RH_media` tienen asimetría negativa moderada que el logaritmo empeoraría.
+- **Estandarización (media 0, desviación 1)** sólo donde la técnica depende de la escala: PCA, conglomerados y discriminante. La regresión lineal y la logística no la requieren para ajustar, aunque ayuda a comparar coeficientes. **No se guardan columnas estandarizadas en la base**: para los modelos supervisados la media y la desviación deben calcularse con los datos de entrenamiento y aplicarse a validación/prueba, de lo contrario hay fuga de información. Para el PCA y los conglomerados (descriptivos) se estandariza sobre los casos completos del periodo de modelado.
+- **No se aplican pruebas de normalidad univariada.** Con decenas de miles de observaciones rechazan casi cualquier distribución; la normalidad aproximada que importa para el discriminante se revisará en el modelo, y con una variable objetivo de excedencia la regresión logística es la comparación prevista.
+
+```{r log}
+for (v in c("NO_media", "NO2_media", "NOX_media", "NOX_manana")) {
+  base_diaria[[paste0("log_", v)]] <- log1p(base_diaria[[v]])
+}
+```
+
+**Colinealidad entre atributos** (relevante para la regresión y el discriminante):
+
+```{r colinealidad}
+bm <- base_diaria[base_diaria$modelado, ]
+vv <- c("log_NO_media", "log_NO2_media", "log_NOX_media", "log_NOX_manana",
+        "TOUT_media", "TOUT_max", "SR_media", "RH_media", "WSR_media", "PRS_media")
+round(cor(bm[vv], use = "pairwise.complete.obs"), 2)
+```
+
+`NOX` es casi una combinación de `NO` y `NO2` (correlación alta con `NO`), y `TOUT_media` y `TOUT_max` están correlacionadas ~0.96. Por tanto, **en un mismo modelo se usará `NOX` o el par `NO`/`NO2`, y `TOUT_max` o `TOUT_media`**; las demás se conservan en la base para poder elegir y se revisarán con factores de inflación de la varianza al modelar.
+
+### 5.4 Casos completos tras la transformación
+
+```{r completos}
+pred <- c("log_NO_media", "log_NO2_media", "log_NOX_media", "log_NOX_manana", "TOUT_media",
+          "TOUT_max", "RH_media", "PRS_media", "SR_media", "WSR_media", "U_media", "V_media")
+base_diaria$completo <- base_diaria$valido_o3 & complete.cases(base_diaria[pred])
+tab <- data.frame(
+  anio = sort(unique(base_diaria$anio)),
+  estacion_dias = as.vector(table(base_diaria$anio)),
+  completos = as.vector(tapply(base_diaria$completo, base_diaria$anio, sum))
+)
+tab$pct_completos <- round(100 * tab$completos / tab$estacion_dias, 1)
+tab
+```
+
+`O3_prev` no entra en la definición de caso completo porque es opcional y añade un `NA` por inicio de serie y por cada hueco previo.
+
+## 6. Reestructuración de los datos
+
+Las fuentes están organizadas **por año (libro) y estación (hoja)**, en formato horario y ancho (una columna por variable). Para el análisis se reestructura así:
+
+1. **Base horaria limpia** (`base_analisis`, sección 7): un solo `data.frame` con una fila por estación-hora y las 10 variables seleccionadas, resultante de apilar las 90 hojas. Sirve para auditar y para recalcular agregaciones.
+2. **Base diaria** (`base_diaria`): **una fila por estación-día** y una columna por atributo (formato ancho), que es el formato que esperan PCA, conglomerados, regresión y discriminante. Incluye el objetivo (`O3_max8`, `exc_60`, `exc_51`), los atributos, los calendarios y las banderas `modelado` y `completo`.
+3. **Perfil por estación** (`perfil_estacion`): una fila por estación y una columna por variable (media del periodo de modelado, estandarizada), para el conglomerado de estaciones del objetivo 3.
+
+No hace falta pasar a formato largo: ningún método previsto lo requiere, y las variables diarias comparten unidad de análisis. Si se llega a graficar con series por variable, la conversión es inmediata.
+
+```{r perfil}
+vars_perfil <- c("O3_max8", "log_NO_media", "log_NO2_media", "log_NOX_manana", "TOUT_max",
+                 "RH_media", "PRS_media", "SR_media", "WSR_media", "U_media", "V_media")
+bm <- base_diaria[base_diaria$modelado, ]
+perfil_estacion <- aggregate(bm[vars_perfil], list(estacion = bm$estacion), mean, na.rm = TRUE)
+perfil_z <- cbind(estacion = perfil_estacion$estacion, round(as.data.frame(scale(perfil_estacion[-1])), 2))
+perfil_z
+```
+
+`PRS_media` varía sobre todo con la altitud de cada estación (ver sección 4.2), de modo que en el perfil de estaciones domina esa diferencia fija; conviene decidir en el análisis si se conserva o se resta por estación. Además, NO3 tiene sólo ~940 días válidos de ozono en 2021–2025, por lo que su perfil es menos fiable.
+
+Diccionario de la base diaria:
+
+```{r diccionario-diario}
+diccionario_diaria <- data.frame(
+  variable = c("estacion", "dia", "anio", "O3_max8", "O3_prev", "exc_60", "exc_51",
+               "NO_media, NO2_media, NOX_media", "NOX_manana", "log_*",
+               "TOUT_media, TOUT_max", "RH_media, PRS_media, SR_media, WSR_media",
+               "U_media, V_media", "mes, temporada, fin_semana", "doy_sin, doy_cos",
+               "valido_o3", "modelado", "completo"),
+  descripcion = c("Estación (15 niveles)", "Fecha", "Año",
+                  "Máximo diario de la media móvil de 8 h de O3 (ppb); NA si el día no es válido",
+                  "O3_max8 del día anterior en la misma estación",
+                  "Excedencia con criterio de 60 ppb (Sí/No; NA si día no válido)",
+                  "Excedencia con criterio de 51 ppb",
+                  "Medias diarias (ppb), >= 18 h válidas", "Media 06-09 h de NOX (ppb), >= 3 de 4 h",
+                  "log1p de las variables de NO, NO2, NOX y NOX_manana",
+                  "Media y máximo diario de temperatura (°C)", "Medias diarias en sus unidades originales",
+                  "Componentes medios del viento este-oeste y norte-sur (km/h)",
+                  "Calendario (factores y indicador de fin de semana)", "Ciclo anual como seno y coseno",
+                  "Día con >= 18 h de ozono y máximo de 8 h calculable",
+                  "TRUE si anio >= 2021 (2020 se excluye de los modelos)",
+                  "TRUE si el día tiene ozono válido y todos los atributos del modelo (sección 5.4)"))
+diccionario_diaria
+```
+
+Se guarda la base diaria para reutilizarla sin repetir la lectura de los libros (`datos/procesados/` es una salida regenerable de este documento):
+
+```{r exportar}
+dir.create("datos/procesados", showWarnings = FALSE)
+salida <- base_diaria
+salida$dia <- format(salida$dia)
+salida$exc_60 <- as.integer(salida$exc_60 == "Sí")
+salida$exc_51 <- as.integer(salida$exc_51 == "Sí")
+write.csv(salida, "datos/procesados/sima_diaria_estacion.csv", row.names = FALSE, na = "",
+          fileEncoding = "UTF-8")
+c(filas = nrow(salida), columnas = ncol(salida))
+```
+
+## 7. Base de análisis resultante
+
+```{r base-final}
+limpio$modelado <- limpio$anio_libro >= 2021
+base_analisis <- limpio[c("anio_libro", "estacion", "fecha", vars_sel, "flag_NOX", "modelado")]
+
+data.frame(
+  concepto = c("Filas originales (suma de libros)", "Filas tras eliminar duplicados",
+               "Filas de la base de análisis", "Columnas originales (sin año ni estación)",
+               "Columnas de la base de análisis (variables)",
+               "Filas con las 10 variables nulas", "Estación-días con ozono válido",
+               "Estación-días con todas las variables válidas (2021–2025)"),
+  valor = c(nrow(bd), nrow(datos), nrow(base_analisis), 15, length(vars_sel),
+            sum(rowSums(!is.na(base_analisis[vars_sel])) == 0),
+            sum(diario$valido_o3),
+            sum(diario$completo & diario$anio >= 2021))
+)
+```
+
+Las filas con las 10 variables nulas se **conservan** porque documentan el hueco temporal; las reglas de cobertura diaria ya las ignoran, y pueden descartarse al modelar.
+
+### Resumen de decisiones
+
+| Tema | Decisión |
+|---|---|
+| Periodo | 2020–2025 (2026 no se incorpora); 2020 queda fuera de los modelos (`modelado = FALSE`). |
+| Estaciones | Las 15. |
+| Variables | `O3`, `NO`, `NO2`, `NOX`, `TOUT`, `SR`, `WSR`, `WDR`, `RH`, `PRS`; se excluyen `PM10`, `PM2.5`, `SO2`, `CO`, `RAINF` en la primera versión. |
+| Objetivos | `O3` (continua) y excedencia diaria con el máximo de la media móvil de 8 h, a 60 y 51 ppb constantes. |
+| Duplicados | Llave estación + fecha-hora. |
+| Espurios | `-9999`, rango de operación del PDF por año, `RH` = 0, rachas ≥ 24 h; `PRS` con rango físico 680–760 mmHg. Todo a `NA`, con bitácora. |
+| Faltantes | Sin imputación; casos completos por estación-día con ≥ 75 % de horas válidas. |
+| Categóricas | `estacion` como factor; dummies sólo en regresión (lineal y logística). `WDR` circular, sin dummies. |
+| Atípicos | Extremos plausibles conservados; se atenúan con `log1p` en los precursores. |
+| Discretización | No para predictores; sólo el objetivo (`exc_60`, `exc_51`). |
+| Transformación | `log1p` en `NO`, `NO2`, `NOX` y `NOX_manana`; `O3` y meteorología sin transformar. |
+| Escalamiento | Estandarización sólo para PCA, conglomerados y discriminante; en modelos supervisados se ajusta con entrenamiento. No hay columnas estandarizadas en la base. |
+| Atributos derivados | Componentes `U`/`V` del viento, `TOUT_max`, `NOX_manana`, `O3_prev`, calendario (`mes`, `temporada`, `fin_semana`, ciclo anual). |
+| Reestructura | Base horaria limpia, base diaria estación-día (`datos/procesados/sima_diaria_estacion.csv`) y perfil por estación. |
+
+### Pendientes
+
+- Verificar los umbrales de ozono por año contra la NOM-020-SSA1-2021 y SINAICA, y decidir si los 60 y 51 ppb constantes son el criterio definitivo.
+- Confirmar con SIMA si el rango de `PRS` del PDF es único para toda la red o hay rangos por estación, y qué significa la nota "omitir máximo de NTE2" (aquí cubierta por el rango).
+- Confirmar con la fuente si los vacíos corresponden a valores invalidados por bandera.
+- Decidir si el entregable "base limpia (.csv)" es la base diaria (ya exportada, ~32 mil filas) o también la horaria (~750 mil filas, de decenas de MB).
+- Decidir si `O3_prev` se usa como predictor y si `PRS_media` se centra por estación en el perfil de estaciones.
