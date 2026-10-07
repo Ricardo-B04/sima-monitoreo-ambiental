@@ -1,6 +1,7 @@
 ---
 title: "SIMA Nuevo León 2020–2025: preparación y transformación de los datos"
 lang: es
+knit: (function(input, ...) rmarkdown::render(input, output_dir = file.path(dirname(input), "salidas"), envir = globalenv()))
 output:
   html_document:
     toc: true
@@ -10,7 +11,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
-# El documento vive en informes/; las rutas se resuelven desde la raíz del proyecto
+# El documento vive en analisis/; las rutas se resuelven desde la raíz del proyecto
 knitr::opts_knit$set(root.dir = normalizePath(".."))
 library(readxl)
 ```

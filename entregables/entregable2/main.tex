@@ -1,3 +1,4 @@
+% !TeX program = XeLaTeX
 \documentclass[11pt,letterpaper]{article}
 
 \usepackage[utf8]{inputenc}
@@ -172,11 +173,11 @@ La cobertura no es homog\'enea (Anexo~\ref{fig:anexo-cob}). NO3 s\'olo tiene 468
 
 %-------------------------------------------------------------
 \section{Reproducibilidad del an\'alisis}
-Repositorio: \url{https://github.com/Ricardo-B04/sima-monitoreo-ambiental}. El archivo \nolinkurl{README.md} indica el orden de ejecuci\'on: \nolinkurl{informes/01_comprension_datos.Rmd} y \nolinkurl{informes/02_preparacion_datos.Rmd} (diagn\'ostico y limpieza; requieren los libros originales de SIMA, que no se publican) generan la base limpia \nolinkurl{datos/procesados/sima_diaria_estacion.csv}; \nolinkurl{informes/03_exploracion_descriptiva.Rmd} parte de ese \texttt{.csv} y produce todas las cifras, tablas y figuras de este informe, y \nolinkurl{informes/entregable2/main.tex} compila el documento.
+Repositorio: \url{https://github.com/Ricardo-B04/sima-monitoreo-ambiental}. El archivo \nolinkurl{README.md} indica el orden de ejecuci\'on: \nolinkurl{analisis/01_comprension_datos.Rmd} y \nolinkurl{analisis/02_preparacion_datos.Rmd} (diagn\'ostico y limpieza; requieren los libros originales de SIMA, que no se publican) generan la base limpia \nolinkurl{datos/procesados/sima_diaria_estacion.csv}; \nolinkurl{analisis/03_exploracion_descriptiva.Rmd} parte de ese \texttt{.csv} y produce todas las cifras, tablas y figuras de este informe, y \nolinkurl{entregables/entregable2/main.tex} compila el documento.
 
 %-------------------------------------------------------------
 \section{Declaratoria de uso de inteligencia artificial}
-\textbf{Opci\'on B. Se utiliz\'o IA de la siguiente forma.} \textbf{Herramienta:} Posit Assistant, asistente de IA generativa integrado en RStudio. \textbf{Uso realizado:} apoyo en el c\'odigo en R de la exploraci\'on descriptiva, el c\'alculo de cifras, las figuras y tablas y la redacci\'on de borradores. \textbf{Secciones donde se utiliz\'o:} 2 a 6 y anexos. \textbf{Validaci\'on realizada por los estudiantes:} el equipo ejecut\'o de manera independiente \nolinkurl{informes/03_exploracion_descriptiva.Rmd} a partir de la base limpia y contrast\'o cada cifra, tabla y figura citada en el texto con la salida reproducida; adem\'as revisamos el c\'odigo generado, verificamos los supuestos estad\'isticos de cada an\'alisis y reescribimos las interpretaciones y conclusiones con criterio propio. Confirmamos que revisamos y verificamos el contenido y asumimos la responsabilidad del contenido final entregado.
+\textbf{Opci\'on B. Se utiliz\'o IA de la siguiente forma.} \textbf{Herramienta:} Posit Assistant, asistente de IA generativa integrado en RStudio. \textbf{Uso realizado:} apoyo en el c\'odigo en R de la exploraci\'on descriptiva, el c\'alculo de cifras, las figuras y tablas y la redacci\'on de borradores. \textbf{Secciones donde se utiliz\'o:} 2 a 6 y anexos. \textbf{Validaci\'on realizada por los estudiantes:} el equipo ejecut\'o de manera independiente \nolinkurl{analisis/03_exploracion_descriptiva.Rmd} a partir de la base limpia y contrast\'o cada cifra, tabla y figura citada en el texto con la salida reproducida; adem\'as revisamos el c\'odigo generado, verificamos los supuestos estad\'isticos de cada an\'alisis y reescribimos las interpretaciones y conclusiones con criterio propio. Confirmamos que revisamos y verificamos el contenido y asumimos la responsabilidad del contenido final entregado.
 
 %-------------------------------------------------------------
 \begin{thebibliography}{9}

@@ -1,6 +1,7 @@
 ---
 title: "SIMA Nuevo León 2021–2025: exploración descriptiva orientada al objetivo (Etapa 2)"
 lang: es
+knit: (function(input, ...) rmarkdown::render(input, output_dir = file.path(dirname(input), "salidas"), envir = globalenv()))
 output:
   html_document:
     toc: true
@@ -17,7 +18,7 @@ library(ggplot2)
 library(patchwork)
 ```
 
-Este documento continúa a `02_preparacion_datos.Rmd`. **Parte sólo de la base diaria limpia** (`datos/procesados/sima_diaria_estacion.csv`), por lo que se puede ejecutar sin los libros originales. Genera las figuras y tablas del Entregable 2 en `informes/entregable2/img/` y `informes/entregable2/tablas/`, y todas las cifras citadas en el texto del informe.
+Este documento continúa a `02_preparacion_datos.Rmd`. **Parte sólo de la base diaria limpia** (`datos/procesados/sima_diaria_estacion.csv`), por lo que se puede ejecutar sin los libros originales. Genera las figuras y tablas del Entregable 2 en `entregables/entregable2/img/` y `entregables/entregable2/tablas/`, y todas las cifras citadas en el texto del informe.
 
 Cada sección responde una pregunta concreta derivada del objetivo de indagación:
 
@@ -26,8 +27,8 @@ Cada sección responde una pregunta concreta derivada del objetivo de indagació
 ## 0. Datos y periodo
 
 ```{r datos}
-dir_img <- "informes/entregable2/img"
-dir_tab <- "informes/entregable2/tablas"
+dir_img <- "entregables/entregable2/img"
+dir_tab <- "entregables/entregable2/tablas"
 dir.create(dir_img, showWarnings = FALSE, recursive = TRUE)
 dir.create(dir_tab, showWarnings = FALSE, recursive = TRUE)
 

@@ -4,7 +4,7 @@ datos/originales/BD_*.xlsx
 renv/library/
 renv/staging/
 renv/local/
-informes/build/
+analisis/salidas/
 *.aux
 *.bbl
 *.bcf
@@ -18,5 +18,6 @@ informes/build/
 *.toc
 .DS_Store
 .posit/assistant
-informes/*_cache/
-informes/*_files/
+analisis/*_cache/
+analisis/*_files/
+*.xdv
