@@ -20,4 +20,7 @@ Registro de lo que el equipo ha acordado y de lo que sigue pendiente. Se actuali
 | Reglas de limpieza | Centinela -9999 y valores fuera de rango (TOUT, RH, SR, WSR, PRS, RAINF) por definir y cruzar con `rangos_parametros_SIMA.pdf`. |
 | Conteo de registros | Difiere del borrador en 2020 (-70), 2021 (-268) y 2024 (-13); en 2022, 2023 y 2025 coincide. Hipótesis sin confirmar: filas vacías en el XML. |
 | NOX | No coincide con NO + NO2 en 23 525 registros pese a que el diccionario lo define como su suma. |
+| Radiación y humedad inusuales (Etapa 2) | 146 estación-días con `SR_media` > 0.4 kW/m² (90 en NE2-2021, 51 en NO2) y 71 con `RH_media` < 10 %. Pasan los rangos de operación pero parecen falla de sensor; coinciden con los atípicos de Mahalanobis. Consultar con SIMA antes de invalidarlos. |
+| Presión por estación (Etapa 2) | En la exploración se usa como anomalía respecto de la media de cada estación; decidir si así entra a PCA y modelos. |
+| Validación (Etapa 2) | Propuesta: entrenar 2021–2024 y evaluar 2025, y dejar una estación fuera. |
 | Fuentes de apoyo | PIMUS, inventario 2018 y padrón de medio ambiente se citan en el borrador pero no están en el repo. |

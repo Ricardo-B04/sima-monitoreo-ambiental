@@ -1,0 +1,363 @@
+---
+title: "SIMA Nuevo León 2021–2025: exploración descriptiva orientada al objetivo (Etapa 2)"
+lang: es
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+```
+
+Este documento continúa a `02_preparacion_datos.Rmd`. **Parte sólo de la base diaria limpia** (`datos/procesados/sima_diaria_estacion.csv`), por lo que se puede ejecutar sin los libros originales. Genera las figuras y tablas del Entregable 2 en `informes/entregable2/img/` y `informes/entregable2/tablas/`, y todas las cifras citadas en el texto del informe.
+
+Cada sección responde una pregunta concreta derivada del objetivo de indagación:
+
+> ¿Cómo se relacionan las concentraciones de ozono con sus precursores (NO, NO2, NOx) y con la meteorología en las estaciones de SIMA, y qué combinación de estas variables permite explicar y clasificar los episodios de excedencia?
+
+## 0. Datos y periodo
+
+```{r datos}
+dir_img <- "informes/entregable2/img"
+dir_tab <- "informes/entregable2/tablas"
+dir.create(dir_img, showWarnings = FALSE, recursive = TRUE)
+dir.create(dir_tab, showWarnings = FALSE, recursive = TRUE)
+
+d0 <- read.csv("datos/procesados/sima_diaria_estacion.csv", fileEncoding = "UTF-8")
+d0$dia <- as.Date(d0$dia)
+
+# Ubicación de estaciones (referencias/originales/ubicacion_estaciones.docx) y
+# nombres (datos/originales/Etiquetas.xlsx). El sector agrupa las zonas de SIMA.
+estaciones <- data.frame(
+  estacion = c("SE", "NE", "CE", "NO", "SO", "NO2", "NTE", "NE2", "SE2", "SO2", "SE3", "SUR", "NTE2", "NE3", "NO3"),
+  zona = c("Sureste", "Noreste", "Centro", "Noroeste", "Suroeste", "Noroeste 2", "Norte", "Noreste 2",
+           "Sureste 2", "Suroeste 2", "Sureste 3", "Sur", "Norte 2", "Noreste 3", "Noroeste 3"),
+  nombre = c("La Pastora", "San Nicolás", "Obispado", "San Bernabé", "Santa Catarina", "García", "Escobedo",
+             "Apodaca", "Juárez", "San Pedro", "Cadereyta", "Pueblo Serena", "Universidad", "—", "—"),
+  msnm = c(500, 474, 562, 568, 674, 702, 503, 432, 387, 636, 334, 555, 520, 346, 607),
+  lon = -c(100.2436, 100.2531, 100.3383, 100.3692, 100.4581, 100.5844, 100.3272, 100.1881,
+           100.0953, 100.4128, 99.9992, 100.2739, 100.3100, 100.0783, 100.4636)
+)
+estaciones$sector <- factor(
+  ifelse(grepl("Noroeste|Suroeste", estaciones$zona), "Poniente",
+         ifelse(grepl("Noreste|Sureste", estaciones$zona), "Oriente", "Centro")),
+  levels = c("Poniente", "Centro", "Oriente"))
+
+d0 <- left_join(d0, estaciones[c("estacion", "sector", "msnm")], by = "estacion")
+d0$temporada <- factor(d0$temporada, levels = c("Primavera", "Verano", "Otoño", "Invierno"))
+
+# Periodo de análisis: 2021-2025 (2020 queda fuera de los modelos, ver Etapa 1)
+bm <- d0 |> filter(modelado)
+c(estacion_dias = nrow(bm), con_ozono_valido = sum(bm$valido_o3), completos = sum(bm$completo))
+```
+
+## 1. ¿Cómo son las variables principales?
+
+Resumen univariado de las variables diarias del periodo 2021–2025. El porcentaje de faltantes tiene como denominador los 27,390 estación-días posibles (15 estaciones × 1,826 días).
+
+```{r resumen}
+vars_m <- c("O3_max8", "NO_media", "NO2_media", "NOX_media", "NOX_manana", "TOUT_max", "TOUT_media",
+            "SR_media", "RH_media", "WSR_media", "U_media", "V_media", "PRS_media")
+asim <- function(x) { x <- x[!is.na(x)]; mean((x - mean(x))^3) / sd(x)^3 }
+
+resumen <- data.frame(
+  variable = vars_m,
+  pct_faltante = sapply(vars_m, \(v) round(100 * mean(is.na(bm[[v]])), 1)),
+  minimo = sapply(vars_m, \(v) round(min(bm[[v]], na.rm = TRUE), 2)),
+  q1 = sapply(vars_m, \(v) round(quantile(bm[[v]], .25, na.rm = TRUE), 2)),
+  mediana = sapply(vars_m, \(v) round(median(bm[[v]], na.rm = TRUE), 2)),
+  q3 = sapply(vars_m, \(v) round(quantile(bm[[v]], .75, na.rm = TRUE), 2)),
+  p99 = sapply(vars_m, \(v) round(quantile(bm[[v]], .99, na.rm = TRUE), 2)),
+  maximo = sapply(vars_m, \(v) round(max(bm[[v]], na.rm = TRUE), 2)),
+  asimetria = sapply(vars_m, \(v) round(asim(bm[[v]]), 2)),
+  row.names = NULL)
+resumen
+```
+
+Clase de excedencia (máximo diario de la media móvil de 8 h por encima del umbral, constante en todo el periodo):
+
+```{r clase}
+bm |> filter(valido_o3) |>
+  summarise(dias = n(), exc_60 = sum(exc_60), pct_60 = round(100 * mean(exc_60), 1),
+            exc_51 = sum(exc_51), pct_51 = round(100 * mean(exc_51), 1))
+```
+
+Dirección predominante del viento (componente `U` < 0 indica viento que sopla hacia el oeste, es decir, que viene del este):
+
+```{r viento}
+c(pct_dias_U_negativo = round(100 * mean(bm$U_media < 0, na.rm = TRUE), 1))
+```
+
+## 2. ¿Difiere el ozono entre estaciones y sectores?
+
+```{r estaciones}
+por_est <- bm |>
+  group_by(estacion) |>
+  summarise(dias_o3 = sum(valido_o3), pct_validos = round(100 * mean(valido_o3), 1),
+            completos = sum(completo),
+            mediana_o3 = round(median(O3_max8, na.rm = TRUE), 1),
+            p90_o3 = round(quantile(O3_max8, .9, na.rm = TRUE), 1),
+            pct_exc60 = round(100 * mean(exc_60, na.rm = TRUE), 1),
+            pct_exc51 = round(100 * mean(exc_51, na.rm = TRUE), 1),
+            mediana_nox = round(median(NOX_media, na.rm = TRUE), 1)) |>
+  left_join(estaciones, by = "estacion") |>
+  arrange(desc(mediana_o3))
+por_est
+
+# Asociación entre la mediana de ozono de cada estación y su ubicación (n = 15 estaciones)
+c(rho_o3_altitud = cor(por_est$mediana_o3, por_est$msnm, method = "spearman"),
+  rho_o3_longitud = cor(por_est$mediana_o3, por_est$lon, method = "spearman"),
+  rho_altitud_longitud = cor(por_est$msnm, por_est$lon, method = "spearman"),
+  rho_o3_nox = cor(por_est$mediana_o3, por_est$mediana_nox, method = "spearman"))
+
+bm |> filter(valido_o3) |> group_by(sector) |>
+  summarise(estaciones = n_distinct(estacion), dias = n(), mediana_o3 = round(median(O3_max8), 1),
+            pct_exc60 = round(100 * mean(exc_60), 1), pct_exc51 = round(100 * mean(exc_51), 1))
+```
+
+```{r fig-estaciones, fig.width=7.2, fig.height=2.7}
+orden <- por_est$estacion
+etiquetas <- setNames(paste0(por_est$estacion, "\n", por_est$msnm, " m"), por_est$estacion)
+exc_lab <- por_est |> transmute(estacion, lab = paste0(pct_exc60, "%"))
+
+ggplot(filter(bm, valido_o3), aes(x = factor(estacion, levels = orden), y = O3_max8, fill = sector)) +
+  geom_boxplot(outlier.size = 0.3, outlier.alpha = 0.3, linewidth = 0.3) +
+  geom_hline(yintercept = c(51, 60), linetype = c("dotted", "dashed"), linewidth = 0.4) +
+  geom_text(data = exc_lab, aes(x = estacion, y = 128, label = lab), inherit.aes = FALSE, size = 2.5) +
+  scale_x_discrete(labels = etiquetas) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(x = NULL, y = "O3, máximo de 8 h (ppb)", fill = "Sector") +
+  theme_bw(base_size = 9) +
+  theme(legend.position = "top", legend.margin = margin(0, 0, 0, 0), legend.key.size = unit(0.35, "cm"))
+ggsave(file.path(dir_img, "fig1_estaciones.pdf"), width = 7.2, height = 2.7)
+```
+
+## 3. ¿Cómo cambia el ozono en el año, entre años y por tipo de día?
+
+```{r mensual}
+mensual <- bm |>
+  group_by(mes) |>
+  summarise(mediana_o3 = round(median(O3_max8, na.rm = TRUE), 1),
+            pct_exc60 = round(100 * mean(exc_60, na.rm = TRUE), 1),
+            TOUT_max = round(median(TOUT_max, na.rm = TRUE), 1),
+            SR_media = round(median(SR_media, na.rm = TRUE), 3),
+            RH_media = round(median(RH_media, na.rm = TRUE), 0),
+            NOX_media = round(median(NOX_media, na.rm = TRUE), 1),
+            WSR_media = round(median(WSR_media, na.rm = TRUE), 1))
+mensual
+
+anual <- d0 |>
+  group_by(anio) |>
+  summarise(estaciones_con_o3 = n_distinct(estacion[valido_o3]), dias_validos = sum(valido_o3),
+            mediana_o3 = round(median(O3_max8, na.rm = TRUE), 1),
+            pct_exc60 = round(100 * mean(exc_60, na.rm = TRUE), 1),
+            pct_exc51 = round(100 * mean(exc_51, na.rm = TRUE), 1),
+            TOUT_max = round(median(TOUT_max, na.rm = TRUE), 1))
+anual
+
+# ¿El aumento de 2024-2025 ocurre dentro de cada estación? (estación-años con >= 200 días válidos)
+bm |> group_by(estacion, anio) |>
+  summarise(e = mean(exc_60, na.rm = TRUE), n = sum(valido_o3), .groups = "drop") |>
+  filter(n >= 200) |>
+  group_by(estacion) |>
+  summarise(antes = mean(e[anio <= 2023]), despues = mean(e[anio >= 2024])) |>
+  summarise(estaciones_que_suben = sum(despues > antes), estaciones = n(),
+            mediana_cambio_pp = round(100 * median(despues - antes), 1))
+
+# Tipo de día: entre semana vs fin de semana
+bm |> group_by(fin_semana) |>
+  summarise(mediana_o3 = round(median(O3_max8, na.rm = TRUE), 1),
+            pct_exc60 = round(100 * mean(exc_60, na.rm = TRUE), 1),
+            mediana_NOX_manana = round(median(NOX_manana, na.rm = TRUE), 1),
+            mediana_NO_media = round(median(NO_media, na.rm = TRUE), 1))
+```
+
+```{r fig-temporal, fig.width=7.2, fig.height=2.45}
+p_mes <- bm |>
+  group_by(anio, mes) |>
+  summarise(o3 = median(O3_max8, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(mes, o3, color = factor(anio))) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 0.8) +
+  geom_hline(yintercept = 51, linetype = "dotted", linewidth = 0.4) +
+  scale_x_continuous(breaks = 1:12, labels = c("E", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D")) +
+  scale_color_viridis_d(end = 0.9) +
+  labs(x = "Mes", y = "Mediana de O3 máx. 8 h (ppb)", color = "Año", title = "(a) Ciclo anual") +
+  theme_bw(base_size = 9) +
+  theme(legend.key.size = unit(0.3, "cm"))
+
+p_anio <- bm |>
+  filter(valido_o3) |>
+  group_by(anio, sector) |>
+  summarise(exc = 100 * mean(exc_60), .groups = "drop") |>
+  ggplot(aes(anio, exc, color = sector)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 0.8) +
+  scale_color_brewer(palette = "Set2") +
+  labs(x = "Año", y = "% de días > 60 ppb", color = "Sector", title = "(b) Excedencias por año") +
+  theme_bw(base_size = 9) +
+  theme(legend.key.size = unit(0.3, "cm"))
+
+p_mes + p_anio + plot_layout(widths = c(1.35, 1))
+ggsave(file.path(dir_img, "fig2_temporal.pdf"), width = 7.2, height = 2.45)
+```
+
+## 4. ¿Qué variables se asocian con el ozono y con la excedencia?
+
+Las variables se centran por estación (anomalías respecto de la media de cada estación) para separar la variación día a día de las diferencias fijas entre ubicaciones; esto es indispensable para la presión, que depende sobre todo de la altitud. Los precursores se usan en `log1p`, como se definió en la Etapa 1.
+
+```{r asociaciones}
+pv <- c("log_NO_media", "log_NO2_media", "log_NOX_manana", "TOUT_max", "SR_media", "RH_media",
+        "WSR_media", "U_media", "V_media", "PRS_media")
+etq <- c(O3_max8 = "O3 máx. 8 h", log_NO_media = "NO", log_NO2_media = "NO2", log_NOX_manana = "NOx 06-09 h",
+         TOUT_max = "Temp. máx.", SR_media = "Radiación", RH_media = "Humedad", WSR_media = "Vel. viento",
+         U_media = "Viento U", V_media = "Viento V", PRS_media = "Presión")
+
+bc <- bm |>
+  group_by(estacion) |>
+  mutate(across(c(O3_max8, all_of(pv)), ~ .x - mean(.x, na.rm = TRUE))) |>
+  ungroup()
+
+# Correlación de Spearman con O3: sin centrar y centrada por estación
+data.frame(
+  variable = pv,
+  rho_sin_centrar = sapply(pv, \(v) round(cor(bm$O3_max8, bm[[v]], use = "pairwise", method = "spearman"), 2)),
+  rho_centrada = sapply(pv, \(v) round(cor(bc$O3_max8, bc[[v]], use = "pairwise", method = "spearman"), 2)),
+  row.names = NULL)
+
+# Persistencia: correlación con el máximo de 8 h del día anterior
+round(cor(bm$O3_max8, bm$O3_prev, use = "pairwise", method = "spearman"), 2)
+
+# Diferencia estandarizada de medias (d de Cohen) entre días con y sin excedencia (60 ppb),
+# y razón de desviaciones estándar (Sí / No), sobre anomalías por estación
+d_cohen <- do.call(rbind, lapply(pv, function(v) {
+  x1 <- na.omit(bc[[v]][bm$exc_60 == 1]); x0 <- na.omit(bc[[v]][bm$exc_60 == 0])
+  data.frame(variable = v, d = (mean(x1) - mean(x0)) / sqrt((var(x1) + var(x0)) / 2),
+             razon_de = sd(x1) / sd(x0))
+}))
+d_cohen |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> arrange(desc(abs(d)))
+
+# Correlación de O3 con temperatura, humedad y NOx por temporada (anomalías por estación)
+bc |> group_by(temporada) |>
+  summarise(rho_temp = cor(O3_max8, TOUT_max, use = "pair", method = "spearman"),
+            rho_humedad = cor(O3_max8, RH_media, use = "pair", method = "spearman"),
+            rho_nox_manana = cor(O3_max8, log_NOX_manana, use = "pair", method = "spearman")) |>
+  mutate(across(where(is.numeric), ~ round(.x, 2)))
+```
+
+```{r fig-asociaciones, fig.width=7.2, fig.height=2.85}
+p_d <- d_cohen |>
+  mutate(lab = factor(etq[variable], levels = etq[variable][order(d)])) |>
+  ggplot(aes(d, lab)) +
+  geom_vline(xintercept = 0, linewidth = 0.3) +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = "dotted", linewidth = 0.3) +
+  geom_segment(aes(x = 0, xend = d, yend = lab), linewidth = 0.4) +
+  geom_point(size = 1.6) +
+  labs(x = "d de Cohen (excede 60 ppb vs. no)", y = NULL, title = "(a) Diferencia entre grupos") +
+  theme_bw(base_size = 9)
+
+cm <- cor(bc[c("O3_max8", pv)], use = "pairwise", method = "spearman")
+dimnames(cm) <- list(etq[rownames(cm)], etq[colnames(cm)])
+cm_df <- as.data.frame(as.table(cm)) |>
+  mutate(Var1 = factor(Var1, levels = rev(etq)), Var2 = factor(Var2, levels = etq)) |>
+  filter(as.integer(Var2) <= length(etq) + 1 - as.integer(Var1))
+p_cor <- ggplot(cm_df, aes(Var2, Var1, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.1f", Freq)), size = 2.1) +
+  scale_fill_distiller(palette = "RdBu", limits = c(-1, 1), direction = 1) +
+  labs(x = NULL, y = NULL, fill = "rho", title = "(b) Correlación de Spearman") +
+  theme_minimal(base_size = 8) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.grid = element_blank(),
+        legend.key.width = unit(0.25, "cm"))
+
+p_d + p_cor + plot_layout(widths = c(1, 1.25))
+ggsave(file.path(dir_img, "fig3_asociaciones.pdf"), width = 7.2, height = 2.85)
+```
+
+## 5. ¿Qué problemas de datos pueden influir en el análisis?
+
+Cobertura: porcentaje de estación-días con ozono y **todas** las variables del modelo válidas, por estación y año (Anexo).
+
+```{r cobertura, fig.width=7.2, fig.height=3}
+cob <- d0 |>
+  group_by(estacion, anio) |>
+  summarise(pct = 100 * mean(completo), .groups = "drop") |>
+  mutate(estacion = factor(estacion, levels = rev(orden)))
+
+ggplot(cob, aes(factor(anio), estacion, fill = pct)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(pct), color = pct > 60), size = 2.4, show.legend = FALSE) +
+  scale_color_manual(values = c(`FALSE` = "black", `TRUE` = "white")) +
+  scale_fill_distiller(palette = "Greys", direction = 1, limits = c(0, 100)) +
+  labs(x = "Año", y = NULL, fill = "% completos") +
+  theme_minimal(base_size = 9) +
+  theme(panel.grid = element_blank(), legend.key.width = unit(0.3, "cm"))
+ggsave(file.path(dir_img, "figA1_cobertura.pdf"), width = 6, height = 3.3)
+```
+
+¿Los casos completos difieren de los incompletos en ozono? ¿Qué variable limita más la completitud?
+
+```{r sesgo-completos}
+bm |> filter(valido_o3) |> group_by(completo) |>
+  summarise(dias = n(), mediana_o3 = round(median(O3_max8), 1), pct_exc60 = round(100 * mean(exc_60), 1))
+
+bm |> filter(valido_o3) |>
+  summarise(across(c(log_NO_media, log_NO2_media, log_NOX_media, log_NOX_manana, TOUT_max, RH_media,
+                     PRS_media, SR_media, WSR_media, U_media), ~ round(100 * mean(is.na(.x)), 1))) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "pct_faltante_con_o3_valido")
+```
+
+Valores diarios inusuales (dentro del rango de operación, pero poco plausibles como media diaria o asociados a un evento):
+
+```{r inusuales}
+c(SR_media_mayor_0.4 = sum(bm$SR_media > 0.4, na.rm = TRUE),
+  RH_media_menor_10 = sum(bm$RH_media < 10, na.rm = TRUE),
+  TOUT_max_negativa = sum(bm$TOUT_max < 0, na.rm = TRUE))
+bm |> filter(SR_media > 0.4) |> count(estacion, anio)
+# La temperatura máxima negativa coincide con la helada de febrero de 2021
+bm |> filter(TOUT_max < 0) |> select(estacion, dia, TOUT_max)
+```
+
+Atípicos multivariados: distancia de Mahalanobis sobre los casos completos estandarizados (O3 y los 10 predictores, anomalías por estación), con el percentil 99.9 de una $\chi^2_{11}$ como referencia. Es un diagnóstico, no una regla de exclusión.
+
+```{r mahalanobis}
+cc <- bc |> filter(bm$completo)
+X <- scale(cc[c("O3_max8", pv)])
+md <- mahalanobis(X, colMeans(X), cov(X))
+atip <- md > qchisq(.999, ncol(X))
+c(casos_completos = nrow(X), atipicos = sum(atip), pct = round(100 * mean(atip), 2))
+sort(table(cc$estacion[atip]), decreasing = TRUE)
+```
+
+## 6. Tablas para el anexo del informe
+
+```{r tablas-anexo}
+tab_est <- por_est |>
+  transmute(Estación = estacion, Zona = zona, Sector = sector, msnm,
+            `Días O3` = dias_o3, `% válidos` = pct_validos, Completos = completos,
+            `Mediana O3` = mediana_o3, `P90 O3` = p90_o3,
+            `% > 60` = pct_exc60, `% > 51` = pct_exc51, `Mediana NOx` = mediana_nox)
+writeLines(knitr::kable(tab_est, format = "latex", booktabs = TRUE, linesep = ""),
+           file.path(dir_tab, "tabA1_estaciones.tex"))
+
+tab_mes <- mensual |>
+  transmute(Mes = c("Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic")[mes],
+            `Mediana O3` = mediana_o3, `% > 60` = pct_exc60, `Temp. máx.` = TOUT_max,
+            Radiación = SR_media, Humedad = RH_media, `NOx` = NOX_media, Viento = WSR_media)
+writeLines(knitr::kable(tab_mes, format = "latex", booktabs = TRUE, linesep = ""),
+           file.path(dir_tab, "tabA2_mensual.tex"))
+tab_est
+tab_mes
+```
+
+```{r sesion}
+sessionInfo()
+```
