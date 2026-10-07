@@ -21,3 +21,4 @@ analisis/salidas/
 analisis/*_cache/
 analisis/*_files/
 *.xdv
+README.html
