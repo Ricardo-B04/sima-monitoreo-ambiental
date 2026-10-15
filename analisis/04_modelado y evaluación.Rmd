@@ -1,0 +1,999 @@
+---
+title: "SIMA Nuevo León 2021–2025: modelado y evaluación (Etapa 3)"
+author: "Equipo 3"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  fig.width = 7,
+  fig.height = 4
+)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(mgcv)
+
+raiz <- normalizePath(
+  if (dir.exists("datos/procesados")) "." else "..",
+  winslash = "/"
+)
+
+knitr::opts_knit$set(root.dir = raiz)
+options(width = 100)
+```
+
+## 0. Datos y periodo
+
+Se utiliza la base diaria generada en la Etapa 1, que contiene las variables transformadas y los indicadores de excedencia. El análisis se concentra en 2021–2025. Los datos de 2021–2024 se reservan para desarrollar los modelos y estimar sus transformaciones, mientras que 2025 se utilizará para la evaluación final.
+
+```{r lectura-datos}
+d0 <- read.csv(
+  file.path(raiz, "datos/procesados/sima_diaria_estacion.csv"),
+  fileEncoding = "UTF-8"
+)
+
+d0$dia <- as.Date(d0$dia)
+d0$estacion <- factor(d0$estacion)
+
+bm <- d0 |>
+  filter(anio %in% 2021:2025) |>
+  arrange(estacion, dia) |>
+  mutate(
+    periodo = if_else(anio <= 2024, "Entrenamiento", "Prueba")
+  )
+
+c(
+  estacion_dias = nrow(bm),
+  estaciones = n_distinct(bm$estacion),
+  con_ozono_valido = sum(bm$valido_o3)
+)
+```
+
+## 1. Análisis de componentes principales
+
+### 1.1 Variables y disponibilidad de datos
+
+Se revisa la disponibilidad de los ocho predictores de precursores y meteorología por estación y periodo. Se utilizan NO y NO₂ transformados y se reserva el ozono para interpretar el PCA.
+
+```{r variables-cobertura-pca}
+vars_pca <- c(
+  "log_NO_media", "log_NO2_media",
+  "TOUT_max", "SR_media", "RH_media", "PRS_media",
+  "U_media", "V_media"
+)
+
+bm$completo_pca <- complete.cases(bm[vars_pca])
+
+cobertura_pca <- bm |>
+  group_by(estacion, periodo) |>
+  summarise(
+    dias = n(),
+    disponibles_pca = sum(completo_pca),
+    pct_disponibles = round(100 * mean(completo_pca), 1),
+    .groups = "drop"
+  )
+
+knitr::kable(cobertura_pca)
+```
+
+### 1.2 Valores pendientes de revisión
+
+Se identifican por estación y año los días con radiación media superior a 0.4 kW/m² o humedad media inferior a 10 %. Estos valores requieren revisión, pero no se consideran errores confirmados.
+
+```{r revision-radiacion-humedad}
+bm$revisar_SR <- !is.na(bm$SR_media) & bm$SR_media > 0.4
+bm$revisar_RH <- !is.na(bm$RH_media) & bm$RH_media < 10
+
+revision_valores <- bm |>
+  filter(revisar_SR | revisar_RH) |>
+  group_by(estacion, anio) |>
+  summarise(
+    dias_radiacion_alta = sum(revisar_SR),
+    dias_humedad_baja = sum(revisar_RH),
+    dias_con_variables_pca = sum(completo_pca),
+    .groups = "drop"
+  )
+
+knitr::kable(revision_valores)
+```
+
+### 1.3 Preparación y cálculo del PCA
+
+El PCA utiliza los casos completos de 2021–2024. Las variables se centran por estación para analizar sus variaciones diarias y se estandarizan para hacer comparables sus escalas.
+
+```{r ajuste-pca}
+base_pca <- bm |>
+  filter(periodo == "Entrenamiento", completo_pca)
+
+# Medias por estación calculadas únicamente con los casos de entrenamiento
+centros_pca <- base_pca |>
+  group_by(estacion) |>
+  summarise(
+    across(all_of(vars_pca), mean),
+    .groups = "drop"
+  )
+
+# Restar a cada observación la media de su estación
+X_pca <- as.matrix(base_pca[vars_pca])
+
+pos <- match(base_pca$estacion, centros_pca$estacion)
+
+X_pca <- X_pca -
+  as.matrix(centros_pca[pos, vars_pca])
+
+pca <- prcomp(X_pca, center = TRUE, scale. = TRUE)
+
+c(
+  dias_utilizados = nrow(X_pca),
+  estaciones = n_distinct(base_pca$estacion),
+  variables = ncol(X_pca),
+  dias_senalados = sum(base_pca$revisar_SR | base_pca$revisar_RH)
+)
+```
+
+### 1.4 Varianza explicada y número de componentes
+
+Se revisan los autovalores, la varianza acumulada y el gráfico de sedimentación para seleccionar el número de componentes.
+
+```{r varianza-pca}
+autovalores <- pca$sdev^2
+proporcion <- autovalores / sum(autovalores)
+
+resumen_pca <- data.frame(
+  componente = seq_along(autovalores),
+  autovalor = autovalores,
+  pct_varianza = 100 * proporcion,
+  pct_acumulado = 100 * cumsum(proporcion)
+)
+
+knitr::kable(resumen_pca, digits = 2)
+
+c(
+  componentes_autovalor_mayor_1 = sum(autovalores > 1),
+  componentes_80_pct = which(cumsum(proporcion) >= 0.80)[1]
+)
+```
+
+```{r sedimentacion-pca}
+ggplot(resumen_pca, aes(componente, autovalor)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 2) +
+  geom_hline(
+    yintercept = 1,
+    linetype = "dashed",
+    color = "grey50"
+  ) +
+  scale_x_continuous(breaks = resumen_pca$componente) +
+  labs(
+    x = "Componente principal",
+    y = "Autovalor"
+  ) +
+  theme_bw(base_size = 10)
+```
+
+Los tres primeros componentes tienen autovalores superiores a uno y explican el 69.67 % de la variación. Se conservan cuatro para alcanzar el 81.02 %, considerando también que el cuarto aporta información sobre humedad y presión.
+
+### 1.5 Relación de las variables con los componentes
+
+Se calculan las correlaciones entre las variables y los componentes para identificar qué caracteriza a cada uno.
+
+```{r cargas-pca}
+cargas_pca <- sweep(
+  pca$rotation,
+  MARGIN = 2,
+  STATS = pca$sdev,
+  FUN = "*"
+)
+
+knitr::kable(cargas_pca, digits = 2)
+```
+
+El primer componente contrapone temperatura y radiación con NO, NO₂ y presión. El segundo relaciona la humedad en sentido opuesto a NO y NO₂. El tercero está dominado por la componente norte–sur del viento y el cuarto contrasta humedad y presión. Estas relaciones describen variaciones respecto a la media de cada estación.
+
+### 1.6 Análisis de sensibilidad
+
+Se repite el PCA sin los días señalados, recalculando el centrado y la estandarización, para comparar la varianza explicada y las puntuaciones.
+
+```{r sensibilidad-pca}
+k_pca <- 4
+componentes_pca <- paste0("PC", seq_len(k_pca))
+
+conservar <- !(base_pca$revisar_SR | base_pca$revisar_RH)
+base_pca_sens <- base_pca[conservar, ]
+
+# Recalcular las medias por estación
+centros_pca_sens <- base_pca_sens |>
+  group_by(estacion) |>
+  summarise(
+    across(all_of(vars_pca), mean),
+    .groups = "drop"
+  )
+
+X_pca_sens <- as.matrix(base_pca_sens[vars_pca])
+
+pos_sens <- match(
+  base_pca_sens$estacion,
+  centros_pca_sens$estacion
+)
+
+X_pca_sens <- X_pca_sens -
+  as.matrix(centros_pca_sens[pos_sens, vars_pca])
+
+pca_sens <- prcomp(
+  X_pca_sens,
+  center = TRUE,
+  scale. = TRUE
+)
+
+proporcion_sens <- pca_sens$sdev^2 / sum(pca_sens$sdev^2)
+
+comparacion_pca <- data.frame(
+  ajuste = c("PCA inicial", "Sin días señalados"),
+  dias = c(nrow(base_pca), nrow(base_pca_sens)),
+  varianza_4_pct = 100 * c(
+    sum(proporcion[seq_len(k_pca)]),
+    sum(proporcion_sens[seq_len(k_pca)])
+  )
+)
+
+knitr::kable(comparacion_pca, digits = 2)
+```
+
+```{r comparacion-puntuaciones-pca}
+cor_puntuaciones <- abs(cor(
+  pca$x[conservar, componentes_pca, drop = FALSE],
+  pca_sens$x[, componentes_pca, drop = FALSE]
+))
+
+colnames(cor_puntuaciones) <- paste0(componentes_pca, "_sens")
+
+knitr::kable(cor_puntuaciones, digits = 3)
+```
+
+Al excluir los 82 días señalados, la varianza explicada aumenta de 81.02 % a 81.29 %. Las correlaciones entre componentes correspondientes superan 0.99. Como la estructura cambia poco, se conserva el PCA inicial.
+
+### 1.7 Visualización de los componentes
+
+Se representan los planos PC1–PC2 y PC3–PC4. El color indica la desviación del ozono respecto a su media por estación en entrenamiento. Los días sin ozono aparecen en gris.
+
+```{r puntuaciones-pca}
+puntuaciones_pca <- bind_cols(
+  base_pca |> select(estacion, dia, O3_max8),
+  as.data.frame(pca$x[, componentes_pca, drop = FALSE])
+) |>
+  group_by(estacion) |>
+  mutate(
+    O3_anomalia = O3_max8 - mean(O3_max8, na.rm = TRUE)
+  ) |>
+  ungroup()
+```
+
+```{r graficas-pca}
+grafico_pca <- function(eje_x, eje_y) {
+  ix <- match(eje_x, colnames(pca$x))
+  iy <- match(eje_y, colnames(pca$x))
+
+  ggplot(
+    puntuaciones_pca,
+    aes(
+      x = .data[[eje_x]],
+      y = .data[[eje_y]],
+      color = O3_anomalia
+    )
+  ) +
+    geom_hline(yintercept = 0, color = "grey80", linewidth = 0.3) +
+    geom_vline(xintercept = 0, color = "grey80", linewidth = 0.3) +
+    geom_point(alpha = 0.3, size = 0.6) +
+    scale_color_gradient2(
+      low = "#2166AC",
+      mid = "grey90",
+      high = "#B2182B",
+      midpoint = 0,
+      na.value = "grey70"
+    ) +
+    labs(
+      x = sprintf("%s (%.2f %%)", eje_x, resumen_pca$pct_varianza[ix]),
+      y = sprintf("%s (%.2f %%)", eje_y, resumen_pca$pct_varianza[iy]),
+      color = "Desviación de O3\nrespecto a su media (ppb)"
+    ) +
+    theme_bw(base_size = 10)
+}
+
+p_pca12 <- grafico_pca("PC1", "PC2")
+p_pca12
+
+p_pca34 <- grafico_pca("PC3", "PC4")
+p_pca34
+```
+
+En PC1–PC2, los días con ozono superior a la media de su estación tienden a ubicarse hacia valores positivos de PC1 y negativos de PC2. En PC3–PC4, los colores están más mezclados y el patrón es menos claro.
+
+### 1.8 Asociación de los componentes con el ozono
+
+Se calcula la correlación de Spearman entre cada componente y la desviación del ozono respecto a su media por estación.
+
+```{r asociacion-pca-ozono}
+correlacion_pca_o3 <- data.frame(
+  componente = componentes_pca,
+  dias_con_ozono = sum(!is.na(puntuaciones_pca$O3_anomalia)),
+  rho_o3 = sapply(componentes_pca, function(cp) {
+    cor(
+      puntuaciones_pca[[cp]],
+      puntuaciones_pca$O3_anomalia,
+      method = "spearman",
+      use = "complete.obs"
+    )
+  }),
+  row.names = NULL
+)
+
+knitr::kable(correlacion_pca_o3, digits = 3)
+```
+
+PC2 presenta la asociación más fuerte con el ozono, con una correlación de −0.453, seguido de PC1, con 0.325. Las asociaciones de PC3 y PC4 son pequeñas. Los cuatro componentes se conservan para describir la estructura de los predictores.
+
+## 2. Regresión lineal múltiple
+
+### 2.1 Preparación de los datos
+
+Se añaden términos anuales y semestrales y se seleccionan los casos completos para modelar el ozono con precursores y meteorología del mismo día. Se utiliza 2021–2024 para entrenamiento y se reserva 2025 para evaluación.
+
+```{r preparacion-regresion}
+# Segundo par de términos estacionales a partir de los ya existentes
+bm$doy_sin2 <- 2 * bm$doy_sin * bm$doy_cos
+bm$doy_cos2 <- bm$doy_cos^2 - bm$doy_sin^2
+
+vars_reg <- c(
+  vars_pca,
+  "doy_sin", "doy_cos", "doy_sin2", "doy_cos2"
+)
+
+bm$completo_reg <- complete.cases(
+  bm[c("O3_max8", vars_reg)]
+)
+
+cobertura_reg <- bm |>
+  group_by(estacion, periodo) |>
+  summarise(
+    dias = n(),
+    disponibles_reg = sum(completo_reg),
+    pct_disponibles = round(100 * mean(completo_reg), 1),
+    meses_disponibles = n_distinct(
+      format(dia[completo_reg], "%m")
+    ),
+    .groups = "drop"
+  )
+
+knitr::kable(cobertura_reg)
+```
+
+### 2.2 Ajuste inicial por estación
+
+Se ajusta una regresión por estación con los mismos predictores y se resumen su R², R² ajustado y RMSE de entrenamiento.
+
+```{r ajuste-regresiones}
+entrenamiento_reg <- bm |>
+  filter(periodo == "Entrenamiento", completo_reg)
+
+formula_reg <- reformulate(
+  vars_reg,
+  response = "O3_max8"
+)
+
+modelos_reg <- lapply(
+  split(
+    entrenamiento_reg,
+    entrenamiento_reg$estacion,
+    drop = TRUE
+  ),
+  function(d) lm(formula_reg, data = d)
+)
+
+resumen_reg_inicial <- do.call(
+  rbind,
+  lapply(names(modelos_reg), function(e) {
+    modelo <- modelos_reg[[e]]
+    resumen <- summary(modelo)
+
+    data.frame(
+      estacion = e,
+      observaciones = nobs(modelo),
+      R2 = resumen$r.squared,
+      R2_ajustado = resumen$adj.r.squared,
+      RMSE_ppb = sqrt(mean(residuals(modelo)^2))
+    )
+  })
+)
+
+knitr::kable(resumen_reg_inicial, digits = 3)
+```
+
+Los modelos explican entre 37.5 % y 70.1 % de la variación del ozono en entrenamiento. NO3 alcanza el mayor R², pero solo cuenta con 332 días, equivalentes al 22.7 % del periodo. Por ello, este resultado debe valorarse junto con la cobertura y la evaluación temporal.
+
+### 2.3 Colinealidad entre predictores
+
+Se calcula el VIF para revisar la colinealidad entre predictores e identificar valores superiores a diez.
+
+```{r vif-regresiones}
+vif_reg <- do.call(
+  rbind,
+  lapply(names(modelos_reg), function(e) {
+    valores <- car::vif(modelos_reg[[e]])
+
+    data.frame(
+      estacion = e,
+      variable = names(valores),
+      VIF = as.numeric(valores)
+    )
+  })
+)
+
+resumen_vif <- vif_reg |>
+  group_by(estacion) |>
+  summarise(
+    max_VIF = max(VIF),
+    variable_mayor_VIF = variable[which.max(VIF)],
+    variables_VIF_mayor_10 = sum(VIF > 10),
+    .groups = "drop"
+  )
+
+knitr::kable(resumen_vif, digits = 2)
+```
+
+Los VIF máximos van de 4.66 a 6.92 y corresponden principalmente a la temperatura máxima. Ninguno supera diez, aunque existe redundancia entre algunos predictores.
+
+### 2.4 Revisión gráfica de los residuos
+
+Se examinan los residuos estandarizados frente a los valores ajustados para detectar curvatura y cambios de dispersión.
+
+```{r datos-diagnostico-regresion}
+diagnostico_reg <- bind_rows(
+  lapply(names(modelos_reg), function(e) {
+    modelo <- modelos_reg[[e]]
+
+    d <- entrenamiento_reg |>
+      filter(estacion == e) |>
+      arrange(dia)
+
+    data.frame(
+      estacion = e,
+      dia = d$dia,
+      ajustado = as.numeric(fitted(modelo)),
+      residuo = as.numeric(residuals(modelo)),
+      residuo_est = as.numeric(rstandard(modelo))
+    )
+  })
+)
+```
+
+```{r residuos-ajustados, fig.width=9, fig.height=10}
+ggplot(diagnostico_reg, aes(ajustado, residuo_est)) +
+  geom_hline(yintercept = 0, color = "grey60", linewidth = 0.3) +
+  geom_point(alpha = 0.25, size = 0.5) +
+  geom_smooth(
+    method = "loess",
+    se = FALSE,
+    color = "#B2182B",
+    linewidth = 0.5
+  ) +
+  facet_wrap(~ estacion, scales = "free", ncol = 3) +
+  labs(
+    x = "Ozono ajustado (ppb)",
+    y = "Residuo estandarizado"
+  ) +
+  theme_bw(base_size = 9)
+```
+
+En varias estaciones se observan curvaturas, residuos grandes y cambios de dispersión. Estos patrones indican limitaciones del ajuste lineal y justifican explorar relaciones no lineales.
+
+### 2.5 Dependencia temporal de los residuos
+
+Se correlacionan los residuos separados por uno y siete días, vinculándolos por fecha para respetar los días faltantes.
+
+```{r dependencia-temporal-residuos}
+cor_disponibles <- function(x, y) {
+  completos <- complete.cases(x, y)
+
+  if (sum(completos) < 3) return(NA_real_)
+
+  cor(x[completos], y[completos])
+}
+
+dependencia_reg <- do.call(
+  rbind,
+  lapply(names(modelos_reg), function(e) {
+    d <- diagnostico_reg |>
+      filter(estacion == e)
+
+    residuo_1 <- d$residuo[match(d$dia - 1, d$dia)]
+    residuo_7 <- d$residuo[match(d$dia - 7, d$dia)]
+
+    data.frame(
+      estacion = e,
+      pares_1_dia = sum(!is.na(residuo_1)),
+      rho_1_dia = cor_disponibles(d$residuo, residuo_1),
+      pares_7_dias = sum(!is.na(residuo_7)),
+      rho_7_dias = cor_disponibles(d$residuo, residuo_7)
+    )
+  })
+)
+
+knitr::kable(dependencia_reg, digits = 3)
+```
+
+La correlación entre días consecutivos es positiva en todas las estaciones y varía de 0.243 a 0.689. Parte de esta asociación persiste a siete días, por lo que debe considerarse la dependencia temporal.
+
+### 2.6 Ajuste con relaciones no lineales
+
+Se ajusta un GAM por estación con los mismos predictores, términos estacionales y días de entrenamiento. Se comparan el R² y el RMSE y se reportan los grados de libertad efectivos.
+
+```{r ajuste-gam}
+formula_gam <- O3_max8 ~
+  s(log_NO_media, k = 5) +
+  s(log_NO2_media, k = 5) +
+  s(TOUT_max, k = 5) +
+  s(SR_media, k = 5) +
+  s(RH_media, k = 5) +
+  s(PRS_media, k = 5) +
+  s(U_media, k = 5) +
+  s(V_media, k = 5) +
+  doy_sin + doy_cos + doy_sin2 + doy_cos2
+
+modelos_gam <- lapply(
+  split(
+    entrenamiento_reg,
+    entrenamiento_reg$estacion,
+    drop = TRUE
+  ),
+  function(d) {
+    gam(
+      formula_gam,
+      data = d,
+      family = gaussian(),
+      method = "REML"
+    )
+  }
+)
+```
+
+```{r comparacion-regresion-gam}
+resumen_gam <- do.call(
+  rbind,
+  lapply(names(modelos_gam), function(e) {
+    modelo <- modelos_gam[[e]]
+
+    observado <- entrenamiento_reg$O3_max8[
+      entrenamiento_reg$estacion == e
+    ]
+
+    residuos <- as.numeric(residuals(modelo, type = "response"))
+
+    data.frame(
+      estacion = e,
+      R2_gam = 1 - sum(residuos^2) /
+        sum((observado - mean(observado))^2),
+      RMSE_gam = sqrt(mean(residuos^2)),
+      gl_gam = sum(modelo$edf)
+    )
+  })
+)
+
+comparacion_lm_gam <- resumen_reg_inicial |>
+  select(
+    estacion,
+    observaciones,
+    R2_lm = R2,
+    RMSE_lm = RMSE_ppb
+  ) |>
+  left_join(resumen_gam, by = "estacion")
+
+knitr::kable(comparacion_lm_gam, digits = 3)
+```
+
+El GAM aumenta el R² y reduce el RMSE de entrenamiento en todas las estaciones. En NO2, el R² pasa de 0.375 a 0.549 y el RMSE disminuye de 14.906 a 12.665 ppb. La mejora con datos nuevos se evaluará con 2025.
+
+### 2.7 Dependencia temporal después del GAM
+
+Se comparan las correlaciones residuales a uno y siete días entre la regresión lineal y el GAM.
+
+```{r dependencia-temporal-gam}
+dependencia_gam <- do.call(
+  rbind,
+  lapply(names(modelos_gam), function(e) {
+    d <- entrenamiento_reg |>
+      filter(estacion == e) |>
+      arrange(dia)
+
+    residuos <- as.numeric(
+      residuals(modelos_gam[[e]], type = "response")
+    )
+
+    residuo_1 <- residuos[match(d$dia - 1, d$dia)]
+    residuo_7 <- residuos[match(d$dia - 7, d$dia)]
+
+    data.frame(
+      estacion = e,
+      rho_1_gam = cor_disponibles(residuos, residuo_1),
+      rho_7_gam = cor_disponibles(residuos, residuo_7)
+    )
+  })
+)
+
+comparacion_dependencia <- dependencia_reg |>
+  select(
+    estacion,
+    rho_1_lm = rho_1_dia,
+    rho_7_lm = rho_7_dias
+  ) |>
+  left_join(dependencia_gam, by = "estacion")
+
+knitr::kable(comparacion_dependencia, digits = 3)
+```
+
+El GAM conserva correlación temporal, con valores de 0.178 a 0.658 entre días consecutivos y de 0.065 a 0.412 a siete días. Estos resultados motivan probar una estructura de correlación para los errores.
+
+### 2.8. Ajuste del GAM con errores correlacionados
+
+Se ajusta un GAMM con errores AR(1) en CE, utilizando los mismos predictores y días de entrenamiento. La estructura temporal emplea días calendario para respetar los intervalos con observaciones faltantes.
+
+```{r ajuste-gamm-ce, cache=TRUE, cache.extra=list(deparse(formula_gam), entrenamiento_reg)}
+datos_ce <- entrenamiento_reg |>
+  filter(estacion == "CE") |>
+  arrange(dia) |>
+  mutate(tiempo = as.integer(dia - as.Date("2021-01-01")))
+
+modelo_gamm_ce <- mgcv::gamm(
+  formula_gam,
+  data = datos_ce,
+  family = gaussian(),
+  correlation = nlme::corAR1(form = ~ tiempo),
+  method = "REML",
+  na.action = na.fail,
+  control = nlme::lmeControl(
+    msVerbose = TRUE,
+    niterEM = 0,
+    msMaxIter = 200,
+    msMaxEval = 400,
+    returnObject = FALSE
+  )
+)
+```
+
+### 2.9. Revisión de la dependencia residual en CE
+
+Se calcula la correlación de los residuos normalizados del GAMM de CE para separaciones de uno a catorce días.
+
+```{r dependencia-gamm-ce}
+residuos_ce <- as.numeric(
+  residuals(modelo_gamm_ce$lme, type = "normalized")
+)
+
+dependencia_gamm_ce <- do.call(
+  rbind,
+  lapply(1:14, function(h) {
+
+    retraso <- residuos_ce[
+      match(datos_ce$dia - h, datos_ce$dia)
+    ]
+
+    data.frame(
+      rezago = h,
+      pares = sum(complete.cases(residuos_ce, retraso)),
+      correlacion = cor_disponibles(residuos_ce, retraso)
+    )
+  })
+)
+
+phi_ce <- as.numeric(
+  coef(
+    modelo_gamm_ce$lme$modelStruct$corStruct,
+    unconstrained = FALSE
+  )
+)
+
+resumen_gamm_ce <- data.frame(
+  estacion = "CE",
+  phi_AR1 = phi_ce,
+  rho_1_normalizado = dependencia_gamm_ce$correlacion[
+    dependencia_gamm_ce$rezago == 1
+  ],
+  rho_7_normalizado = dependencia_gamm_ce$correlacion[
+    dependencia_gamm_ce$rezago == 7
+  ]
+)
+
+knitr::kable(resumen_gamm_ce, digits = 3)
+```
+
+```{r grafica-dependencia-gamm-ce}
+ggplot(
+  dependencia_gamm_ce,
+  aes(x = rezago, y = correlacion)
+) +
+  geom_hline(yintercept = 0, color = "gray50") +
+  geom_segment(
+    aes(xend = rezago, y = 0, yend = correlacion),
+    color = "steelblue"
+  ) +
+  geom_point(color = "steelblue", size = 2) +
+  scale_x_continuous(breaks = 1:14) +
+  labs(
+    title = "Dependencia residual del GAM con errores AR(1): CE",
+    x = "Separación en días calendario",
+    y = "Correlación de residuos normalizados"
+  ) +
+  theme_minimal()
+```
+
+El parámetro AR(1) estimado es 0.525. Las correlaciones de los residuos normalizados son −0.088 a un día y 0.104 a siete días. La dependencia se reduce frente al GAM, aunque permanecen correlaciones positivas en varios rezagos, por lo que la mejora es parcial.
+
+### 2.10. Diagnósticos gráficos del GAM
+
+Se revisan los residuos frente a los valores ajustados y los gráficos de cuantiles normales.
+
+```{r residuos-gam}
+diagnostico_gam <- bind_rows(
+  lapply(names(modelos_gam), function(e) {
+    modelo <- modelos_gam[[e]]
+
+    d <- entrenamiento_reg |>
+      filter(estacion == e) |>
+      arrange(dia)
+
+    data.frame(
+      estacion = e,
+      dia = d$dia,
+      ajustado = as.numeric(fitted(modelo)),
+      residuo = as.numeric(
+        residuals(modelo, type = "response")
+      )
+    )
+  })
+)
+```
+
+```{r grafica-residuos-gam, fig.width=9, fig.height=10}
+ggplot(diagnostico_gam, aes(ajustado, residuo)) +
+  geom_hline(
+    yintercept = 0,
+    color = "grey60",
+    linewidth = 0.3
+  ) +
+  geom_point(alpha = 0.25, size = 0.5) +
+  geom_smooth(
+    method = "loess",
+    se = FALSE,
+    color = "#B2182B",
+    linewidth = 0.5
+  ) +
+  facet_wrap(~ estacion, scales = "free", ncol = 3) +
+  labs(
+    x = "Ozono ajustado (ppb)",
+    y = "Residuo (ppb)"
+  ) +
+  theme_bw(base_size = 9)
+```
+
+Persisten curvaturas en varias estaciones, especialmente NE, NE2, SO y SO2, además de residuos grandes y posibles cambios de dispersión. Los extremos con pocas observaciones requieren cautela.
+
+```{r normalidad-residuos-gam, fig.width=9, fig.height=10}
+ggplot(diagnostico_gam, aes(sample = residuo)) +
+  stat_qq(alpha = 0.3, size = 0.5) +
+  stat_qq_line(
+    color = "#B2182B",
+    linewidth = 0.5
+  ) +
+  facet_wrap(~ estacion, scales = "free", ncol = 3) +
+  labs(
+    x = "Cuantiles normales teóricos",
+    y = "Cuantiles de los residuos (ppb)"
+  ) +
+  theme_bw(base_size = 9)
+```
+
+Los residuos se aproximan a la recta en el centro, pero se desvían en las colas, especialmente en la superior. Estas desviaciones y la dependencia temporal limitan la interpretación de pruebas de significancia e intervalos convencionales.
+
+## 3. Evaluación con 2025
+
+### 3.1 Preparación de la evaluación
+
+Se comparan los modelos en los mismos días completos de 2025, con la media mensual de entrenamiento como referencia. Las estimaciones utilizan predictores del mismo día y el GAMM se evalúa únicamente en CE.
+
+```{r preparacion-evaluacion}
+referencia_mensual <- entrenamiento_reg |>
+  mutate(mes_eval = as.integer(format(dia, "%m"))) |>
+  group_by(estacion, mes_eval) |>
+  summarise(
+    pred_referencia = mean(O3_max8),
+    .groups = "drop"
+  )
+
+prueba_reg <- bm |>
+  filter(periodo == "Prueba", completo_reg) |>
+  mutate(mes_eval = as.integer(format(dia, "%m"))) |>
+  left_join(
+    referencia_mensual,
+    by = c("estacion", "mes_eval")
+  )
+```
+
+```{r predicciones-2025}
+predicciones_2025 <- bind_rows(
+  lapply(
+    split(prueba_reg, prueba_reg$estacion, drop = TRUE),
+    function(d) {
+      e <- as.character(d$estacion[1])
+
+      base <- data.frame(
+        estacion = e,
+        dia = d$dia,
+        observado = d$O3_max8
+      )
+
+      resultados <- bind_rows(
+        mutate(
+          base,
+          modelo = "Referencia mensual",
+          estimado = d$pred_referencia
+        ),
+        mutate(
+          base,
+          modelo = "Regresión lineal",
+          estimado = as.numeric(
+            predict(modelos_reg[[e]], newdata = d)
+          )
+        ),
+        mutate(
+          base,
+          modelo = "GAM",
+          estimado = as.numeric(
+            predict(
+              modelos_gam[[e]],
+              newdata = d,
+              type = "response"
+            )
+          )
+        )
+      )
+
+      if (e == "CE") {
+        resultados <- bind_rows(
+          resultados,
+          mutate(
+            base,
+            modelo = "GAMM AR(1)",
+            estimado = as.numeric(
+              predict(
+                modelo_gamm_ce$gam,
+                newdata = d,
+                type = "response"
+              )
+            )
+          )
+        )
+      }
+
+      resultados
+    }
+  )
+)
+```
+
+### 3.2 Errores en el conjunto de prueba
+
+Se calculan el RMSE, el MAE y el sesgo en ppb. El sesgo se define como estimado menos observado, por lo que los valores negativos indican subestimación.
+
+```{r metricas-evaluacion-2025}
+metricas_2025 <- predicciones_2025 |>
+  group_by(estacion, modelo) |>
+  summarise(
+    dias = n(),
+    meses = n_distinct(format(dia, "%m")),
+    RMSE_ppb = sqrt(mean((estimado - observado)^2)),
+    MAE_ppb = mean(abs(estimado - observado)),
+    sesgo_ppb = mean(estimado - observado),
+    .groups = "drop"
+  )
+
+knitr::kable(metricas_2025, digits = 3)
+```
+
+El GAM obtuvo un RMSE menor que la referencia mensual en las 14 estaciones evaluadas y menor que la regresión lineal en 13. La excepción fue NE3, donde la regresión lineal presentó un error menor.
+
+Todos los métodos mostraron subestimación promedio. En el GAM, esta fue de 9.774 ppb en CE y de 10.571 ppb en NO2. En CE, el RMSE del GAMM fue de 15.027 ppb, muy cercano a los 15.094 del GAM, por lo que la mejora del error de prueba fue pequeña.
+
+La evaluación depende de la cobertura disponible. NTE no pudo evaluarse y NE, NO3 y SO cuentan con periodos especialmente incompletos. Las comparaciones entre métodos deben realizarse dentro de cada estación.
+
+## 4. Papel de los predictores
+
+### 4.1 Magnitud de las contribuciones estimadas
+
+Para cada predictor se calcula la amplitud entre los percentiles 10 y 90 de su contribución en entrenamiento. Se resumen su mediana entre estaciones y su frecuencia entre las tres mayores amplitudes. Esta comparación es descriptiva y no mide aportes únicos ni efectos causales.
+
+```{r contribuciones-predictores}
+contribuciones_gam <- bind_rows(
+  lapply(names(modelos_gam), function(e) {
+    terminos <- predict(
+      modelos_gam[[e]],
+      type = "terms"
+    )
+
+    suaves <- startsWith(colnames(terminos), "s(")
+
+    amplitudes <- apply(
+      terminos[, suaves, drop = FALSE],
+      2,
+      function(x) {
+        diff(quantile(
+          x,
+          probs = c(0.10, 0.90),
+          names = FALSE
+        ))
+      }
+    )
+
+    data.frame(
+      estacion = e,
+      variable = sub(
+        "^s\\((.*)\\)$",
+        "\\1",
+        colnames(terminos)[suaves]
+      ),
+      amplitud_ppb = as.numeric(amplitudes)
+    )
+  })
+) |>
+  group_by(estacion) |>
+  arrange(desc(amplitud_ppb), .by_group = TRUE) |>
+  mutate(posicion = row_number()) |>
+  ungroup()
+
+resumen_variables <- contribuciones_gam |>
+  group_by(variable) |>
+  summarise(
+    mediana_amplitud_ppb = median(amplitud_ppb),
+    estaciones_entre_tres_primeras = sum(posicion <= 3),
+    .groups = "drop"
+  ) |>
+  arrange(desc(mediana_amplitud_ppb))
+
+knitr::kable(resumen_variables, digits = 3)
+```
+
+NO₂, NO y temperatura máxima presentan las mayores amplitudes medianas, con 17.177, 16.230 y 12.555 ppb. Aparecen entre las tres primeras en 14, 11 y 10 de las 15 estaciones, respectivamente. Les sigue la radiación solar, con 10.678 ppb. La humedad, el viento y la presión muestran amplitudes medianas menores.
+
+### 4.2 Relaciones estimadas en CE
+
+Se muestran las contribuciones parciales del GAM de CE, centradas en cero. Las marcas del eje horizontal indican dónde se concentran los datos de entrenamiento y cada panel utiliza su propia escala vertical.
+
+```{r curvas-predictores-ce, fig.width=10, fig.height=10}
+plot(
+  modelos_gam[["CE"]],
+  pages = 1,
+  se = FALSE,
+  rug = TRUE,
+  scale = 0,
+  ylab = "Contribución parcial (ppb)"
+)
+```
+
+En CE, la contribución de NO disminuye conforme aumenta su valor transformado, mientras que la de NO₂ aumenta de forma aproximadamente lineal. La temperatura presenta un incremento más pronunciado en valores altos.
+
+La radiación aumenta en el intervalo intermedio y después tiende a estabilizarse. La humedad alcanza su contribución máxima alrededor de 40–45 % y disminuye hacia valores mayores.
+
+La contribución de la presión disminuye y la de V aumenta. U presenta una relación curva, con un máximo alrededor de −4 a −5 m/s. Estas asociaciones corresponden al ajuste de CE y requieren cautela en los extremos con pocas observaciones.
+
+## 5. Conclusiones parciales
+
+El PCA permitió resumir las ocho variables en cuatro componentes que explican el 81.02 % de su variación. El resultado cambió poco al excluir los días señalados, y las asociaciones más claras con el ozono se concentraron en los dos primeros componentes.
+
+El GAM mejoró el ajuste de entrenamiento y, en 2025, obtuvo un RMSE menor que la referencia mensual en las 14 estaciones evaluadas y que la regresión lineal en 13. NO₂, NO, temperatura máxima y radiación solar destacaron por la amplitud de sus contribuciones estimadas.
+
+En CE, el GAMM redujo la dependencia de los residuos normalizados, pero su error de prueba fue casi igual al del GAM. Por eso, y considerando que tomó aproximadamente 40 minutos hacer el ajuste, se conservó solo como prueba complementaria sin aplicarlo a las demás estaciones. Los GAM se mantienen como modelos principales.
