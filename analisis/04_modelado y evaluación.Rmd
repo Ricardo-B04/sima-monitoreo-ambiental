@@ -988,12 +988,337 @@ En CE, la contribución de NO disminuye conforme aumenta su valor transformado, 
 
 La radiación aumenta en el intervalo intermedio y después tiende a estabilizarse. La humedad alcanza su contribución máxima alrededor de 40–45 % y disminuye hacia valores mayores.
 
-La contribución de la presión disminuye y la de V aumenta. U presenta una relación curva, con un máximo alrededor de −4 a −5 m/s. Estas asociaciones corresponden al ajuste de CE y requieren cautela en los extremos con pocas observaciones.
+La contribución de la presión disminuye y la de V aumenta. U presenta una relación curva, con un máximo alrededor de −4 a −5 km/h. Estas asociaciones corresponden al ajuste de CE y requieren cautela en los extremos con pocas observaciones.
 
-## 5. Conclusiones parciales
+## 5. Clasificación de las excedencias
+
+### 5.1 Datos y distribución de clases
+
+Se prepara la clasificación de los días con ozono superior a 60 ppb, utilizando los mismos predictores de las regresiones. Se revisan los casos completos y la cantidad de días de cada clase. Se reserva 2024 para validación interna y 2025 para la evaluación final.
+
+```{r preparacion-clasificacion}
+vars_clas <- vars_reg
+
+base_clas <- bm
+
+base_clas$completo_clas <- complete.cases(
+  base_clas[c("exc_60", vars_clas)]
+)
+
+base_clas <- base_clas |>
+  mutate(
+    bloque_clas = case_when(
+      anio <= 2023 ~ "Ajuste 2021-2023",
+      anio == 2024 ~ "Validación 2024",
+      anio == 2025 ~ "Prueba 2025"
+    ),
+    bloque_clas = factor(
+      bloque_clas,
+      levels = c(
+        "Ajuste 2021-2023",
+        "Validación 2024",
+        "Prueba 2025"
+      )
+    )
+  )
+```
+
+```{r distribucion-clases}
+distribucion_clas <- base_clas |>
+  group_by(estacion, bloque_clas) |>
+  summarise(
+    dias_completos = sum(completo_clas),
+    sin_excedencia = sum(
+      exc_60[completo_clas] == 0
+    ),
+    con_excedencia = sum(
+      exc_60[completo_clas] == 1
+    ),
+    pct_excedencia = if (sum(completo_clas) > 0) {
+      100 * mean(exc_60[completo_clas] == 1)
+    } else {
+      NA_real_
+    },
+    .groups = "drop"
+  )
+
+knitr::kable(distribucion_clas, digits = 1)
+```
+
+### 5.2 Regresión logística con control por estación
+
+Se ajusta una regresión logística conjunta con los datos de 2021–2023. Las estaciones comparten los coeficientes de los predictores y tienen interceptos propios. Se revisan la convergencia y la estimación de los coeficientes antes de validar con 2024.
+
+```{r ajuste-logistico-inicial, warning=TRUE}
+datos_log_ajuste <- base_clas |>
+  filter(
+    completo_clas,
+    bloque_clas == "Ajuste 2021-2023"
+  ) |>
+  mutate(
+    estacion = droplevels(estacion)
+  )
+
+formula_log <- reformulate(
+  c("estacion", vars_clas),
+  response = "exc_60"
+)
+
+modelo_log_inicial <- glm(
+  formula_log,
+  data = datos_log_ajuste,
+  family = binomial(link = "logit"),
+  na.action = na.fail
+)
+```
+
+```{r resumen-logistico-inicial}
+resumen_log_inicial <- data.frame(
+  observaciones = nobs(modelo_log_inicial),
+  estaciones = n_distinct(datos_log_ajuste$estacion),
+  sin_excedencia = sum(datos_log_ajuste$exc_60 == 0),
+  con_excedencia = sum(datos_log_ajuste$exc_60 == 1),
+  parametros_estimados = modelo_log_inicial$rank,
+  convergio = modelo_log_inicial$converged,
+  coef_no_finitos = sum(
+    !is.finite(coef(modelo_log_inicial))
+  )
+)
+
+knitr::kable(resumen_log_inicial)
+```
+
+### 5.3 Validación y selección del punto de corte
+
+Se calculan las probabilidades de excedencia para 2024 y se comparan puntos de corte entre 0 y 1, en incrementos de 0.01. Se selecciona el que alcance la mayor exactitud balanceada en el conjunto de registros. En caso de empate, se prefiere el de mayor sensibilidad. El corte será común para todas las estaciones y se conservará para la evaluación final con 2025.
+
+```{r probabilidades-validacion-logistica}
+datos_log_validacion <- base_clas |>
+  filter(
+    completo_clas,
+    bloque_clas == "Validación 2024"
+  )
+
+datos_log_validacion$prob_exc <- predict(
+  modelo_log_inicial,
+  newdata = datos_log_validacion,
+  type = "response"
+)
+
+metricas_clas <- function(observado, probabilidad, corte) {
+  predicho <- as.integer(probabilidad >= corte)
+
+  VP <- sum(observado == 1 & predicho == 1)
+  FN <- sum(observado == 1 & predicho == 0)
+  FP <- sum(observado == 0 & predicho == 1)
+  VN <- sum(observado == 0 & predicho == 0)
+
+  dividir <- function(numerador, denominador) {
+    if (denominador > 0) numerador / denominador else NA_real_
+  }
+
+  sensibilidad <- dividir(VP, VP + FN)
+  especificidad <- dividir(VN, VN + FP)
+
+  data.frame(
+    corte = corte,
+    VP = VP,
+    FN = FN,
+    FP = FP,
+    VN = VN,
+    sensibilidad = sensibilidad,
+    especificidad = especificidad,
+    precision = dividir(VP, VP + FP),
+    F1 = dividir(2 * VP, 2 * VP + FP + FN),
+    exactitud_balanceada = (sensibilidad + especificidad) / 2
+  )
+}
+```
+
+```{r seleccion-corte-logistico}
+tabla_cortes <- bind_rows(
+  lapply(seq(0, 1, by = 0.01), function(corte_actual) {
+    metricas_clas(
+      observado = datos_log_validacion$exc_60,
+      probabilidad = datos_log_validacion$prob_exc,
+      corte = corte_actual
+    )
+  })
+)
+
+corte_elegido <- tabla_cortes |>
+  arrange(
+    desc(exactitud_balanceada),
+    desc(sensibilidad),
+    corte
+  ) |>
+  slice(1)
+
+corte_clas <- corte_elegido$corte
+
+comparacion_cortes <- bind_rows(
+  metricas_clas(
+    observado = datos_log_validacion$exc_60,
+    probabilidad = datos_log_validacion$prob_exc,
+    corte = 0.50
+  ) |>
+    mutate(criterio = "Corte 0.50"),
+
+  corte_elegido |>
+    mutate(criterio = "Corte seleccionado")
+) |>
+  select(
+    criterio, corte, sensibilidad, especificidad,
+    precision, F1, exactitud_balanceada
+  )
+
+knitr::kable(comparacion_cortes, digits = 3)
+```
+
+```{r grafica-cortes-logisticos, fig.width=8, fig.height=4.5}
+ggplot(tabla_cortes, aes(x = corte)) +
+  geom_line(aes(y = sensibilidad, color = "Sensibilidad")) +
+  geom_line(aes(y = especificidad, color = "Especificidad")) +
+  geom_line(
+    aes(y = exactitud_balanceada, color = "Exactitud balanceada"),
+    linewidth = 0.9
+  ) +
+  geom_vline(xintercept = corte_clas, linetype = "dashed") +
+  labs(
+    x = "Punto de corte de probabilidad",
+    y = "Valor",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Con el corte de 0.11 se detectó el 76.4 % de las excedencias y se reconoció correctamente el 73.8 % de los días sin excedencia. La exactitud balanceada aumentó de 0.601 a 0.751 respecto al corte de 0.50. Sin embargo, solo el 43.4 % de los registros clasificados como excedencia realmente lo fueron. El corte mejora la detección, aunque mantiene una proporción considerable de falsos positivos. Estos resultados corresponden a la validación con 2024.
+
+### 5.4 Ajuste final y evaluación con 2025
+
+La regresión logística se vuelve a ajustar con los datos de 2021–2024 y se aplica a los registros completos de 2025. Se conserva el corte de probabilidad seleccionado en validación y se revisa el desempeño general y por estación.
+
+```{r ajuste-logistico-final}
+datos_log_final <- base_clas |>
+  filter(
+    completo_clas,
+    anio <= 2024
+  ) |>
+  mutate(estacion = droplevels(estacion))
+
+modelo_log_final <- glm(
+  formula_log,
+  data = datos_log_final,
+  family = binomial(link = "logit"),
+  na.action = na.fail
+)
+
+resumen_log_final <- data.frame(
+  observaciones = nobs(modelo_log_final),
+  estaciones = n_distinct(datos_log_final$estacion),
+  con_excedencia = sum(datos_log_final$exc_60 == 1),
+  parametros_estimados = modelo_log_final$rank,
+  convergio = modelo_log_final$converged,
+  coef_no_finitos = sum(!is.finite(coef(modelo_log_final)))
+)
+
+knitr::kable(resumen_log_final)
+
+stopifnot(
+  isTRUE(modelo_log_final$converged),
+  all(is.finite(coef(modelo_log_final)))
+)
+```
+
+```{r evaluacion-logistica-2025}
+datos_log_prueba <- base_clas |>
+  filter(
+    completo_clas,
+    bloque_clas == "Prueba 2025"
+  )
+
+datos_log_prueba$prob_exc <- predict(
+  modelo_log_final,
+  newdata = datos_log_prueba,
+  type = "response"
+)
+
+datos_log_prueba$clase_predicha <- as.integer(
+  datos_log_prueba$prob_exc >= corte_clas
+)
+
+resultados_log_2025 <- metricas_clas(
+  observado = datos_log_prueba$exc_60,
+  probabilidad = datos_log_prueba$prob_exc,
+  corte = corte_clas
+)
+
+knitr::kable(
+  resultados_log_2025 |>
+    select(
+      corte, sensibilidad, especificidad,
+      precision, F1, exactitud_balanceada
+    ),
+  digits = 3
+)
+
+matriz_log_2025 <- with(
+  datos_log_prueba,
+  table(
+    Observado = factor(
+      exc_60,
+      levels = c(0, 1),
+      labels = c("Sin excedencia", "Con excedencia")
+    ),
+    Clasificado = factor(
+      clase_predicha,
+      levels = c(0, 1),
+      labels = c("Sin excedencia", "Con excedencia")
+    )
+  )
+)
+
+knitr::kable(
+  matriz_log_2025,
+  caption = "Filas: clase observada. Columnas: clase estimada."
+)
+```
+
+```{r evaluacion-logistica-por-estacion}
+resultados_log_estacion <- datos_log_prueba |>
+  group_by(estacion) |>
+  group_modify(~ {
+    metricas_clas(
+      observado = .x$exc_60,
+      probabilidad = .x$prob_exc,
+      corte = corte_clas
+    ) |>
+      mutate(
+        dias = nrow(.x),
+        excedencias = sum(.x$exc_60 == 1)
+      )
+  }) |>
+  ungroup() |>
+  select(
+    estacion, dias, excedencias,
+    sensibilidad, especificidad,
+    precision, F1, exactitud_balanceada
+  )
+
+knitr::kable(resultados_log_estacion, digits = 3)
+```
+
+En 2025, la regresión logística detectó el 83.1 % de las excedencias y reconoció correctamente el 74.3 % de los registros sin excedencia, con una exactitud balanceada de 0.787. Identificó 692 de las 833 excedencias, pero produjo 651 falsos positivos. Por ello, aunque logró detectar gran parte de los casos, solo el 51.5 % de los registros clasificados como excedencia realmente lo fueron.
+
+El desempeño varió entre estaciones. SE2 y SE3 alcanzaron las mayores exactitudes balanceadas, con 0.854 y 0.843. En cambio, NE detectó apenas una de sus siete excedencias y NE2 identificó tres de diez. El resultado de NE debe interpretarse con cautela, pues solo contó con 24 registros de prueba. NTE quedó fuera de la evaluación por no tener registros completos en 2025.
+
+## 6. Conclusiones parciales
 
 El PCA permitió resumir las ocho variables en cuatro componentes que explican el 81.02 % de su variación. El resultado cambió poco al excluir los días señalados, y las asociaciones más claras con el ozono se concentraron en los dos primeros componentes.
 
 El GAM mejoró el ajuste de entrenamiento y, en 2025, obtuvo un RMSE menor que la referencia mensual en las 14 estaciones evaluadas y que la regresión lineal en 13. NO₂, NO, temperatura máxima y radiación solar destacaron por la amplitud de sus contribuciones estimadas.
 
 En CE, el GAMM redujo la dependencia de los residuos normalizados, pero su error de prueba fue casi igual al del GAM. Por eso, y considerando que tomó aproximadamente 40 minutos hacer el ajuste, se conservó solo como prueba complementaria sin aplicarlo a las demás estaciones. Los GAM se mantienen como modelos principales.
+
+La regresión logística detectó el 83.1 % de las excedencias en 2025, con una exactitud balanceada de 0.787. Aunque identificó gran parte de los casos, solo el 51.5 % de los registros clasificados como excedencia realmente lo fueron. Los falsos positivos y las diferencias de desempeño entre estaciones siguen siendo sus principales limitaciones.
