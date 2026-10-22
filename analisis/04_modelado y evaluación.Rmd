@@ -1,6 +1,13 @@
 ---
 title: "SIMA Nuevo León 2021–2025: modelado y evaluación (Etapa 3)"
 author: "Equipo 3"
+lang: es
+knit: (function(input, ...) rmarkdown::render(input, output_dir = file.path(dirname(input), "salidas"), envir = globalenv()))
+params:
+  ejecutar_gamm: false
+  auditar_horarios: true
+  carpeta_originales: "datos/originales"
+  replicas_bootstrap: 1000
 output:
   html_document:
     toc: true
@@ -27,6 +34,14 @@ raiz <- normalizePath(
 
 knitr::opts_knit$set(root.dir = raiz)
 options(width = 100)
+set.seed(5821)
+dir_cierre <- file.path(raiz, "analisis/salidas/cierre")
+dir.create(dir_cierre, recursive = TRUE, showWarnings = FALSE)
+knitr::opts_chunk$set(cache.path = file.path(raiz, "analisis/salidas/cache_modelado/"))
+ruta_originales <- params$carpeta_originales
+if (!grepl("^([A-Za-z]:|/)", ruta_originales)) {
+  ruta_originales <- file.path(raiz, ruta_originales)
+}
 ```
 
 ## 0. Datos y periodo
@@ -641,9 +656,9 @@ El GAM conserva correlación temporal, con valores de 0.178 a 0.658 entre días 
 
 ### 2.8. Ajuste del GAM con errores correlacionados
 
-Se ajusta un GAMM con errores AR(1) en CE, utilizando los mismos predictores y días de entrenamiento. La estructura temporal emplea días calendario para respetar los intervalos con observaciones faltantes.
+Este ajuste complementario se activa con `params$ejecutar_gamm = TRUE`. Se conserva desactivado por defecto porque su ejecución original tomó aproximadamente 40 minutos; las ampliaciones no dependen de él. Se ajusta un GAMM con errores AR(1) en CE, utilizando los mismos predictores y días de entrenamiento. La estructura temporal emplea días calendario para respetar los intervalos con observaciones faltantes.
 
-```{r ajuste-gamm-ce, cache=TRUE, cache.extra=list(deparse(formula_gam), entrenamiento_reg)}
+```{r ajuste-gamm-ce, eval=params$ejecutar_gamm, cache=TRUE, cache.extra=list(deparse(formula_gam), entrenamiento_reg)}
 datos_ce <- entrenamiento_reg |>
   filter(estacion == "CE") |>
   arrange(dia) |>
@@ -670,7 +685,7 @@ modelo_gamm_ce <- mgcv::gamm(
 
 Se calcula la correlación de los residuos normalizados del GAMM de CE para separaciones de uno a catorce días.
 
-```{r dependencia-gamm-ce}
+```{r dependencia-gamm-ce, eval=params$ejecutar_gamm}
 residuos_ce <- as.numeric(
   residuals(modelo_gamm_ce$lme, type = "normalized")
 )
@@ -712,7 +727,7 @@ resumen_gamm_ce <- data.frame(
 knitr::kable(resumen_gamm_ce, digits = 3)
 ```
 
-```{r grafica-dependencia-gamm-ce}
+```{r grafica-dependencia-gamm-ce, eval=params$ejecutar_gamm}
 ggplot(
   dependencia_gamm_ce,
   aes(x = rezago, y = correlacion)
@@ -732,7 +747,7 @@ ggplot(
   theme_minimal()
 ```
 
-El parámetro AR(1) estimado es 0.525. Las correlaciones de los residuos normalizados son −0.088 a un día y 0.104 a siete días. La dependencia se reduce frente al GAM, aunque permanecen correlaciones positivas en varios rezagos, por lo que la mejora es parcial.
+**Resultado de la ejecución original, no recalculado si se desactiva el GAMM:** el parámetro AR(1) estimado fue 0.525. Las correlaciones de los residuos normalizados son −0.088 a un día y 0.104 a siete días. La dependencia se reduce frente al GAM, aunque permanecen correlaciones positivas en varios rezagos, por lo que la mejora es parcial.
 
 ### 2.10. Diagnósticos gráficos del GAM
 
@@ -863,7 +878,7 @@ predicciones_2025 <- bind_rows(
         )
       )
 
-      if (e == "CE") {
+      if (e == "CE" && isTRUE(params$ejecutar_gamm)) {
         resultados <- bind_rows(
           resultados,
           mutate(
@@ -907,7 +922,7 @@ knitr::kable(metricas_2025, digits = 3)
 
 El GAM obtuvo un RMSE menor que la referencia mensual en las 14 estaciones evaluadas y menor que la regresión lineal en 13. La excepción fue NE3, donde la regresión lineal presentó un error menor.
 
-Todos los métodos mostraron subestimación promedio. En el GAM, esta fue de 9.774 ppb en CE y de 10.571 ppb en NO2. En CE, el RMSE del GAMM fue de 15.027 ppb, muy cercano a los 15.094 del GAM, por lo que la mejora del error de prueba fue pequeña.
+Todos los métodos mostraron subestimación promedio. En el GAM, esta fue de 9.774 ppb en CE y de 10.571 ppb en NO2. En la ejecución original de CE, el RMSE del GAMM fue de 15.027 ppb, muy cercano a los 15.094 del GAM, por lo que la mejora del error de prueba fue pequeña.
 
 La evaluación depende de la cobertura disponible. NTE no pudo evaluarse y NE, NO3 y SO cuentan con periodos especialmente incompletos. Las comparaciones entre métodos deben realizarse dentro de cada estación.
 
@@ -1313,7 +1328,7 @@ En 2025, la regresión logística detectó el 83.1 % de las excedencias y recono
 
 El desempeño varió entre estaciones. SE2 y SE3 alcanzaron las mayores exactitudes balanceadas, con 0.854 y 0.843. En cambio, NE detectó apenas una de sus siete excedencias y NE2 identificó tres de diez. El resultado de NE debe interpretarse con cautela, pues solo contó con 24 registros de prueba. NTE quedó fuera de la evaluación por no tener registros completos en 2025.
 
-## 6. Conclusiones parciales
+## 6. Síntesis de los resultados originales
 
 El PCA permitió resumir las ocho variables en cuatro componentes que explican el 81.02 % de su variación. El resultado cambió poco al excluir los días señalados, y las asociaciones más claras con el ozono se concentraron en los dos primeros componentes.
 
@@ -1322,3 +1337,568 @@ El GAM mejoró el ajuste de entrenamiento y, en 2025, obtuvo un RMSE menor que l
 En CE, el GAMM redujo la dependencia de los residuos normalizados, pero su error de prueba fue casi igual al del GAM. Por eso, y considerando que tomó aproximadamente 40 minutos hacer el ajuste, se conservó solo como prueba complementaria sin aplicarlo a las demás estaciones. Los GAM se mantienen como modelos principales.
 
 La regresión logística detectó el 83.1 % de las excedencias en 2025, con una exactitud balanceada de 0.787. Aunque identificó gran parte de los casos, solo el 51.5 % de los registros clasificados como excedencia realmente lo fueron. Los falsos positivos y las diferencias de desempeño entre estaciones siguen siendo sus principales limitaciones.
+
+## 7. Alcance y controles de las ampliaciones
+
+Estas secciones completan las correcciones de código y los pendientes prioritarios. Los criterios constantes de 60 y 51 ppb son escenarios sobre los datos históricos, no una reconstrucción del cumplimiento normativo por año. Los predictores corresponden al mismo día: se explica y clasifica, sin afirmar capacidad de pronóstico anticipado.
+
+La logística se ajusta con 2021–2023, elige cortes con 2024 y se reajusta con 2021–2024 antes de evaluar 2025. En el GAM se comparan las alternativas con ajuste 2021–2024 y evaluación 2025. Como el equipo ya examinó 2025, las ampliaciones son posteriores a esa evaluación; se presentan como sensibilidad, sin seleccionar una alternativa por su resultado de prueba.
+
+```{r controles-cierre}
+stopifnot(!anyDuplicated(bm[c("estacion", "dia")]))
+for (u in c(51, 60)) {
+  ok <- !is.na(bm$O3_max8)
+  stopifnot(all(bm[[paste0("exc_", u)]][ok] == as.integer(bm$O3_max8[ok] > u)))
+}
+for (v in c("NO_media", "NO2_media")) {
+  ok <- complete.cases(bm[c(v, paste0("log_", v))])
+  stopifnot(all(bm[[v]][ok] >= 0),
+            max(abs(log1p(bm[[v]][ok]) - bm[[paste0("log_", v)]][ok])) < 1e-10)
+}
+metricas_nivel <- function(y, p) {
+  stopifnot(length(y) == length(p), all(is.finite(y)), all(is.finite(p)))
+  data.frame(dias = length(y), RMSE_ppb = sqrt(mean((p - y)^2)),
+             MAE_ppb = mean(abs(p - y)), sesgo_ppb = mean(p - y))
+}
+vars_sin_log <- sub("^log_", "", vars_reg)
+```
+
+## 8. Revisión de radiación y humedad
+
+Heriberto y Gerardo confirmaron fallas de radiación (transcripción, pp. 3–4), sin identificar todos los intervalos afectados. Se conservan como señales de revisión `SR_media > 0.4 kW/m²` y `RH_media < 10 %`. La humedad inusual quedó sin aclaración definitiva.
+
+La auditoría contrasta las horas 10–16 y 00–04 del reloj original del archivo, sin conversión horaria. Se señala un día con al menos cinco lecturas diurnas dentro del rango de operación y todas iguales a cero. Estas franjas y la regla numérica son criterios de revisión, no confirmaciones de falla. Los ceros nocturnos se conservan y la base diaria no se modifica.
+
+```{r auditoria-horaria, cache=TRUE, cache.extra=list(params$auditar_horarios, ruta_originales, tools::md5sum(file.path(ruta_originales, sprintf("BD_%d.xlsx", 2021:2025))), tools::md5sum(file.path(raiz, "datos/rangos_operacion_SIMA.csv")))}
+auditoria_horaria <- data.frame()
+auditoria_diaria <- data.frame(estacion = character(), dia = as.Date(character()),
+                               cero_diurno = logical())
+libros <- file.path(ruta_originales, sprintf("BD_%d.xlsx", 2021:2025))
+if (isTRUE(params$auditar_horarios) && all(file.exists(libros))) {
+  rangos_aud <- read.csv(file.path(raiz, "datos/rangos_operacion_SIMA.csv"))
+  tablas_h <- tablas_d <- list()
+  for (i in seq_along(libros)) {
+    for (e in readxl::excel_sheets(libros[i])) {
+      tipos <- rep("skip", 16)
+      tipos[c(1, 11, 13)] <- c("date", "text", "text")
+      h <- as.data.frame(readxl::read_excel(libros[i], sheet = e,
+                                           col_types = tipos, progress = FALSE))
+      names(h) <- c("fecha", "RH", "SR")
+      h <- h[!duplicated(h$fecha) & !is.na(h$fecha), ]
+      h$RH <- suppressWarnings(as.numeric(h$RH))
+      h$SR <- suppressWarnings(as.numeric(h$SR))
+      h$dia <- as.Date(h$fecha, tz = "UTC")
+      hora <- as.integer(format(h$fecha, "%H", tz = "UTC"))
+      r <- subset(rangos_aud, anio == 2020L + i & variable == "SR")
+      stopifnot(nrow(r) == 1)
+      valida <- !is.na(h$SR) & h$SR != -9999 & h$SR >= r$min & h$SR <= r$max
+      diurna <- hora %in% 10:16
+      nocturna <- hora %in% 0:4
+      tablas_h[[length(tablas_h) + 1L]] <- data.frame(
+        estacion = e, anio = 2020L + i, horas = nrow(h),
+        SR_centinela = sum(h$SR == -9999, na.rm = TRUE),
+        SR_fuera_rango = sum(!is.na(h$SR) & h$SR != -9999 & !valida),
+        validas_10_16 = sum(valida & diurna),
+        ceros_10_16 = sum(valida & diurna & h$SR == 0, na.rm = TRUE),
+        validas_00_04 = sum(valida & nocturna),
+        ceros_00_04 = sum(valida & nocturna & h$SR == 0, na.rm = TRUE),
+        RH_menor_10 = sum(h$RH > 0 & h$RH < 10, na.rm = TRUE))
+      tablas_d[[length(tablas_d) + 1L]] <- data.frame(
+        dia = h$dia, valida = valida & diurna,
+        cero = valida & diurna & !is.na(h$SR) & h$SR == 0) |>
+        group_by(dia) |>
+        summarise(n = sum(valida), n_cero = sum(cero), .groups = "drop") |>
+        transmute(estacion = e, dia, cero_diurno = n >= 5 & n == n_cero)
+    }
+  }
+  auditoria_horaria <- bind_rows(tablas_h)
+  auditoria_diaria <- bind_rows(tablas_d)
+} else {
+  cat("Sin auditoría horaria: opción desactivada o faltan libros. Se conservan las banderas diarias.\n")
+}
+```
+
+```{r resumen-auditoria}
+bm <- bm |> left_join(auditoria_diaria, by = c("estacion", "dia")) |>
+  mutate(cero_diurno = coalesce(cero_diurno, FALSE),
+         senalado = revisar_SR | revisar_RH | cero_diurno)
+revision_calidad <- bm |> group_by(estacion, anio) |>
+  summarise(radiacion_alta = sum(revisar_SR), humedad_baja = sum(revisar_RH),
+            cero_diurno = sum(cero_diurno),
+            senalados_completos = sum(senalado & completo_reg), .groups = "drop")
+knitr::kable(revision_calidad |> group_by(estacion) |>
+               summarise(across(where(is.numeric) & !all_of("anio"), sum)))
+base_cierre <- bm |>
+  filter(completo_reg, complete.cases(pick(all_of(c(vars_sin_log, "exc_51", "exc_60")))))
+stopifnot(nrow(base_cierre) == sum(bm$completo_reg))
+```
+
+## 9. Transformaciones, clasificación y sensibilidad a calidad
+
+Se compara NO y NO₂ en ppb originales y con `log1p`, manteniendo los demás predictores y las mismas filas. La respuesta del GAM sigue en ppb con enlace identidad; sus predicciones no se exponencian. Para revisar calidad se excluyen del ajuste los días señalados y se comparan ambos modelos sobre los mismos días no señalados de evaluación. El cambio de muestra no se interpreta como mejora del modelo.
+
+### 9.1 Comparación del GAM
+
+```{r comparacion-gam-transformaciones}
+formula_gam_original <- as.formula(
+  gsub("log_NO", "NO", paste(deparse(formula_gam), collapse = " ")))
+escenarios_gam <- list(Log1p = formula_gam, Original = formula_gam_original,
+                       Sin_senalados = formula_gam)
+pred_gam_cierre <- control_gam_cierre <- list()
+for (e in names(modelos_gam)) {
+  te <- base_cierre |> filter(estacion == e, anio == 2025)
+  if (!nrow(te)) next
+  for (escenario in names(escenarios_gam)) {
+    tr <- base_cierre |> filter(estacion == e, anio <= 2024)
+    if (escenario == "Sin_senalados") tr <- filter(tr, !senalado)
+    mod <- if (escenario == "Log1p") modelos_gam[[e]] else
+      mgcv::gam(escenarios_gam[[escenario]], data = tr, method = "REML",
+                family = gaussian(), na.action = na.fail)
+    stopifnot(isTRUE(mod$converged), all(is.finite(coef(mod))))
+    control_gam_cierre[[length(control_gam_cierre) + 1L]] <- data.frame(
+      escenario, estacion = e, n = nrow(tr), convergio = mod$converged)
+    pred_gam_cierre[[length(pred_gam_cierre) + 1L]] <- data.frame(
+      escenario, estacion = e, dia = te$dia, anio = 2025L,
+      senalado = te$senalado, observado = te$O3_max8,
+      estimado = as.numeric(predict(mod, newdata = te, type = "response")))
+  }
+}
+pred_gam_cierre <- bind_rows(pred_gam_cierre)
+control_gam_cierre <- bind_rows(control_gam_cierre)
+metricas_gam_transformaciones <- pred_gam_cierre |>
+  filter(escenario != "Sin_senalados") |> group_by(anio, estacion, escenario) |>
+  group_modify(~ metricas_nivel(.x$observado, .x$estimado)) |> ungroup()
+metricas_gam_calidad <- pred_gam_cierre |>
+  filter(escenario != "Original", !senalado) |> group_by(anio, estacion, escenario) |>
+  group_modify(~ metricas_nivel(.x$observado, .x$estimado)) |> ungroup()
+knitr::kable(metricas_gam_transformaciones |> select(estacion, escenario, dias, RMSE_ppb) |>
+               pivot_wider(names_from = escenario, values_from = RMSE_ppb), digits = 3)
+knitr::kable(metricas_gam_calidad |> select(estacion, escenario, dias, RMSE_ppb) |>
+               pivot_wider(names_from = escenario, values_from = RMSE_ppb), digits = 3)
+```
+
+NO3 conserva una cobertura reducida: su ajuste final se apoya en 332 días. En NO2 no quedan días de prueba sin señalar, por lo que no se puede evaluar su sensibilidad sobre esa muestra. Las tablas detalladas de cobertura y errores se exportan al final.
+
+### 9.2 Logística para 60 y 51 ppb
+
+Cada escenario selecciona con 2024 un corte por máxima exactitud balanceada, con mayor sensibilidad en caso de empate. Se conservan los mismos predictores y la estación como factor. El corte no se modifica después de observar 2025.
+
+```{r funciones-logistica-cierre}
+elegir_corte <- function(y, p, criterio = "Balanceada") {
+  stopifnot(length(unique(y)) == 2L)
+  tabla <- bind_rows(lapply(seq(0, 1, 0.01), function(c) metricas_clas(y, p, c)))
+  if (criterio == "F1") tabla <- arrange(tabla, desc(F1), desc(sensibilidad), corte) else
+    tabla <- arrange(tabla, desc(exactitud_balanceada), desc(sensibilidad), corte)
+  tabla |> slice(1) |> mutate(criterio = criterio)
+}
+evaluar_clas <- function(y, p, corte, criterio = "Balanceada") {
+  stopifnot(length(y) == length(p), all(y %in% 0:1), all(is.finite(p)),
+            all(p >= 0 & p <= 1))
+  metricas_clas(y, p, corte) |> mutate(criterio = criterio, dias = length(y), excedencias = sum(y))
+}
+ajustar_log_cierre <- function(umbral, transformacion = "Log1p",
+                               sin_senalados = FALSE, estacion_fuera = NULL) {
+  vars <- if (transformacion == "Log1p") vars_reg else vars_sin_log
+  local <- is.null(estacion_fuera)
+  d <- base_cierre |> mutate(evento = .data[[paste0("exc_", umbral)]])
+  otros <- if (local) rep(TRUE, nrow(d)) else d$estacion != estacion_fuera
+  ajuste <- d |> filter(anio <= 2023, otros)
+  validacion <- d |> filter(anio == 2024, otros)
+  final <- d |> filter(anio <= 2024, otros)
+  prueba <- d |> filter(anio == 2025)
+  if (!local) prueba <- filter(prueba, estacion == estacion_fuera)
+  if (sin_senalados) {
+    ajuste <- filter(ajuste, !senalado); final <- filter(final, !senalado)
+    validacion <- filter(validacion, !senalado); prueba <- filter(prueba, !senalado)
+  }
+  f <- reformulate(c(if (local) "estacion", vars), response = "evento")
+  m1 <- glm(f, data = droplevels(ajuste), family = binomial(), na.action = na.fail)
+  mf <- glm(f, data = droplevels(final), family = binomial(), na.action = na.fail)
+  stopifnot(m1$converged, mf$converged, all(is.finite(coef(m1))), all(is.finite(coef(mf))),
+            max(ajuste$anio) < min(validacion$anio), max(final$anio) < 2025)
+  if (local) stopifnot(all(as.character(validacion$estacion) %in% m1$xlevels$estacion),
+                       all(as.character(prueba$estacion) %in% mf$xlevels$estacion)) else
+    stopifnot(!estacion_fuera %in% ajuste$estacion, !estacion_fuera %in% validacion$estacion,
+              !estacion_fuera %in% final$estacion)
+  validacion$prob <- as.numeric(predict(m1, validacion, type = "response"))
+  prueba$prob <- if (nrow(prueba)) as.numeric(predict(mf, prueba, type = "response")) else numeric()
+  final$prob <- as.numeric(fitted(mf))
+  list(modelo = mf, inicial = m1, corte = elegir_corte(validacion$evento, validacion$prob)$corte,
+       validacion = validacion, entrenamiento = final, prueba = prueba)
+}
+```
+
+```{r ajustes-51-60-transformaciones}
+ajustes_cierre <- list()
+for (u in c(60, 51)) {
+  for (t in c("Log1p", "Original"))
+    ajustes_cierre[[paste(u, t, sep = "_")]] <- ajustar_log_cierre(u, t)
+  ajustes_cierre[[paste(u, "Sin_senalados", sep = "_")]] <- ajustar_log_cierre(u, sin_senalados = TRUE)
+}
+control_60 <- ajustes_cierre[["60_Log1p"]]
+stopifnot(isTRUE(all.equal(unname(coef(control_60$modelo)),
+                           unname(coef(modelo_log_final)), tolerance = 1e-8)), control_60$corte == corte_clas)
+metricas_log_cierre <- metricas_log_estacion_cierre <- list()
+for (nombre in names(ajustes_cierre)) {
+  obj <- ajustes_cierre[[nombre]]
+  for (periodo_eval in c("validacion", "prueba")) {
+    d <- obj[[periodo_eval]]
+    umbral <- as.integer(strsplit(nombre, "_", fixed = TRUE)[[1]][1])
+    escenario <- sub("^[0-9]+_", "", nombre)
+    anio <- if (periodo_eval == "validacion") 2024L else 2025L
+    metricas_log_cierre[[length(metricas_log_cierre) + 1L]] <-
+      evaluar_clas(d$evento, d$prob, obj$corte) |> mutate(umbral, escenario, anio)
+    metricas_log_estacion_cierre[[length(metricas_log_estacion_cierre) + 1L]] <- d |>
+      group_by(estacion) |> group_modify(~ evaluar_clas(.x$evento, .x$prob, obj$corte)) |>
+      ungroup() |> mutate(umbral, escenario, anio)
+  }
+}
+metricas_log_cierre <- bind_rows(metricas_log_cierre)
+metricas_log_estacion_cierre <- bind_rows(metricas_log_estacion_cierre)
+knitr::kable(metricas_log_cierre |> filter(escenario != "Sin_senalados") |>
+               select(umbral, escenario, anio, corte, dias, sensibilidad, especificidad,
+                      precision, FP, FN, exactitud_balanceada), digits = 3)
+knitr::kable(metricas_log_estacion_cierre |>
+               filter(anio == 2025, escenario == "Log1p", umbral == 51) |>
+               select(estacion, dias, excedencias, VP, FN, FP, VN, sensibilidad,
+                      especificidad, precision, exactitud_balanceada), digits = 3)
+```
+
+### 9.3 Precisión y revisión de calidad
+
+Solo para el modelo principal de 60 ppb se conserva un corte alternativo elegido por F1 en 2024. Se compara con el corte original sobre los mismos días de 2025; reducir falsas alarmas puede aumentar las excedencias omitidas. Para calidad, cada modelo selecciona su corte sobre los mismos días no señalados de 2024 y se evalúa sobre los mismos días no señalados de 2025.
+
+```{r precision-y-calidad}
+corte_F1 <- elegir_corte(control_60$validacion$evento, control_60$validacion$prob, "F1")$corte
+d <- control_60$prueba
+comparacion_precision <- bind_rows(evaluar_clas(d$evento, d$prob, control_60$corte),
+                                   evaluar_clas(d$evento, d$prob, corte_F1, "F1"))
+knitr::kable(comparacion_precision, digits = 3)
+comparacion_log_calidad <- bind_rows(lapply(c(60, 51), function(u) {
+  original <- ajustes_cierre[[paste(u, "Log1p", sep = "_")]]
+  limpio <- ajustes_cierre[[paste(u, "Sin_senalados", sep = "_")]]
+  v <- filter(original$validacion, !senalado)
+  d <- filter(original$prueba, !senalado)
+  dl <- limpio$prueba
+  stopifnot(identical(as.character(d$estacion), as.character(dl$estacion)), identical(d$dia, dl$dia))
+  bind_rows(evaluar_clas(d$evento, d$prob, elegir_corte(v$evento, v$prob)$corte) |>
+              mutate(escenario = "Log1p"),
+            evaluar_clas(dl$evento, dl$prob, limpio$corte) |>
+              mutate(escenario = "Sin_senalados")) |> mutate(umbral = u, anio = 2025L)
+}))
+knitr::kable(comparacion_log_calidad |> select(umbral, escenario, corte, dias, sensibilidad,
+               precision, FP, FN, exactitud_balanceada), digits = 3)
+```
+
+## 10. Dependencia temporal de la logística
+
+Se conserva un único diagnóstico: correlación de residuos de Pearson, por estación y con separaciones de 1–14 días calendario. Entrenamiento y prueba se analizan por separado; los huecos se respetan vinculando fechas. El diagnóstico no elimina la dependencia. Las métricas de 2025 describen la muestra evaluada y no se usan pruebas convencionales de significancia de coeficientes como si las observaciones fueran independientes.
+
+```{r dependencia-logistica-cierre}
+dependencia_log_cierre <- list()
+for (u in c(60, 51)) {
+  obj <- ajustes_cierre[[paste(u, "Log1p", sep = "_")]]
+  for (per in c("entrenamiento", "prueba")) {
+    d <- obj[[per]]
+    p <- pmin(pmax(d$prob, 1e-8), 1 - 1e-8)
+    d$pearson <- if (per == "entrenamiento") as.numeric(residuals(obj$modelo, type = "pearson")) else
+      (d$evento - p) / sqrt(p * (1 - p))
+    for (e in unique(as.character(d$estacion))) {
+      de <- d |> filter(estacion == e) |> arrange(dia)
+      for (h in 1:14) {
+        x <- de$pearson
+        z <- x[match(de$dia - h, de$dia)]
+        ok <- complete.cases(x, z)
+        rho <- if (sum(ok) >= 3 && sd(x[ok]) > 0 && sd(z[ok]) > 0) cor(x[ok], z[ok]) else NA_real_
+        dependencia_log_cierre[[length(dependencia_log_cierre) + 1L]] <- data.frame(
+          umbral = u, periodo = per, estacion = e, residuo = "pearson", rezago = h,
+          pares = sum(ok), correlacion = rho)
+      }
+    }
+  }
+}
+dependencia_log_cierre <- bind_rows(dependencia_log_cierre)
+knitr::kable(filter(dependencia_log_cierre, rezago %in% c(1, 7)), digits = 3)
+```
+
+```{r grafica-dependencia-logistica, fig.width=10, fig.height=8}
+ggplot(dependencia_log_cierre, aes(rezago, correlacion, color = periodo, linetype = factor(umbral))) +
+  geom_hline(yintercept = 0, color = "grey65") + geom_line(na.rm = TRUE) +
+  facet_wrap(~ estacion, ncol = 3) +
+  labs(x = "Separación en días calendario", y = "Correlación residual de Pearson",
+       color = "Periodo", linetype = "Umbral (ppb)") + theme_bw(base_size = 9)
+```
+
+### 10.1 Comparación con una logística temporal AR(1)
+
+Se añade un modelo binomial con enlace logístico y un estado temporal AR(1) por estación. Conserva los predictores y los interceptos por estación de la logística original. El riesgo no explicado puede persistir entre días: `u[t] = phi * u[t-1] + error[t]`. Las estaciones comparten `phi` y la desviación del estado, pero tienen estados distintos. El ajuste usa aproximación de Laplace mediante `glmmTMB`; los predictores se estandarizan exclusivamente con el entrenamiento. Los niveles temporales incluyen todos los días calendario, también los que no tienen casos completos.
+
+La comparación es **secuencial**: para cada día se integra el riesgo sobre la distribución del estado calculada con respuestas anteriores; después de emitir la probabilidad se incorpora la excedencia observada. Necesita, por tanto, el historial previo de cada estación. Se usan los mismos días y variables actuales que en la logística original, con ese historial adicional. No se utilizan los efectos temporales suavizados del ajuste para evaluar 2024 o 2025, porque conocerían las respuestas que se intenta clasificar. Esto sigue siendo clasificación del mismo día, sin afirmar capacidad de pronóstico anticipado.
+
+Se ajusta con 2021–2023 y se selecciona el corte con las probabilidades secuenciales de 2024. Después se reajusta con 2021–2024 y se evalúa secuencialmente en 2025, manteniendo parámetros y cortes fijos. Se comparan cortes por exactitud balanceada para ambos umbrales y, solo a 60 ppb, por F1. La comparación posterior a examinar 2025 es exploratoria: no constituye una nueva prueba independiente ni una prueba de significancia con días independientes.
+
+```{r funciones-logistica-ar1}
+if (!requireNamespace("glmmTMB", quietly = TRUE) ||
+    packageVersion("glmmTMB") < "1.1.15.2")
+  stop("Se necesita glmmTMB >= 1.1.15.2. Restaurar renv o ejecutar install.packages('glmmTMB').")
+```
+
+```{r ajuste-y-filtro-ar1}
+# Modelo logístico con estado latente AR(1), independiente entre estaciones.
+ajustar_ar1 <- function(d, variables) {
+  stopifnot(requireNamespace("glmmTMB", quietly = TRUE))
+  centro <- vapply(d[variables], mean, numeric(1))
+  escala <- vapply(d[variables], sd, numeric(1))
+  stopifnot(all(is.finite(escala)), all(escala > 0))
+  z <- d
+  z[variables] <- Map(function(x, m, s) (x - m) / s, d[variables], centro, escala)
+  z$estacion <- factor(z$estacion)
+  z$tiempo_ar1 <- factor(as.integer(z$dia - min(z$dia)),
+                         levels = 0:as.integer(max(z$dia) - min(z$dia)))
+  fija <- reformulate(c("estacion", variables), response = "evento")
+  inicial <- glm(fija, data = z, family = binomial())
+  formula_ar1 <- update(fija, . ~ . + ar1(tiempo_ar1 + 0 | estacion))
+  mod <- glmmTMB::glmmTMB(formula_ar1, data = z, family = binomial(),
+    start = list(beta = unname(coef(inicial)), theta = c(log(0.8), 0.6)),
+    control = glmmTMB::glmmTMBControl(optCtrl = list(iter.max = 600, eval.max = 800,
+                                                   rel.tol = 1e-10),
+                 full_cor = FALSE, drop_unused_levels = FALSE))
+  grad <- max(abs(mod$sdr$gradient.fixed))
+  stopifnot(mod$fit$convergence == 0L, isTRUE(mod$sdr$pdHess),
+            is.finite(grad), grad < 0.01)
+  theta <- glmmTMB::getME(mod, "theta")
+  stopifnot(length(theta) == 2L)
+  list(modelo = mod, fija = fija, centro = centro, escala = escala,
+       sigma = exp(theta[1]), phi = theta[2] / sqrt(1 + theta[2]^2),
+       gradiente = grad, variables = variables, niveles = levels(z$estacion))
+}
+
+# Filtrado hacia adelante por cuadratura en una malla del estado estandarizado.
+# Cada probabilidad se calcula ANTES de actualizar el estado con el evento actual.
+# No se usan los efectos suavizados de predict(), que conocen respuestas futuras.
+predecir_ar1 <- function(obj, d, n_malla = 401L, limite_estado = 10) {
+  stopifnot(n_malla %% 2L == 1L, n_malla >= 101L,
+            !anyDuplicated(d[c("estacion", "dia")]))
+  z <- d
+  z$estacion <- factor(z$estacion, levels = obj$niveles)
+  z[obj$variables] <- Map(function(x, m, s) (x - m) / s,
+                          d[obj$variables], obj$centro, obj$escala)
+  X <- model.matrix(delete.response(terms(obj$fija)), z)
+  beta <- glmmTMB::fixef(obj$modelo)$cond
+  eta <- as.numeric(X[, names(beta), drop = FALSE] %*% beta)
+  estado <- seq(-limite_estado, limite_estado, length.out = n_malla)
+  previo <- dnorm(estado); previo <- previo / sum(previo)
+  transiciones <- new.env(parent = emptyenv())
+  prob <- rep(NA_real_, nrow(d))
+  masa_bordes <- 0
+  for (e in levels(z$estacion)) {
+    ids <- which(z$estacion == e)
+    ids <- ids[order(z$dia[ids])]
+    posterior <- previo
+    anterior <- NA_integer_
+    for (i in ids) {
+      hoy <- as.integer(z$dia[i])
+      if (!is.na(anterior)) {
+        salto <- hoy - anterior
+        clave <- as.character(salto)
+        if (!exists(clave, envir = transiciones, inherits = FALSE)) {
+          a <- obj$phi^salto
+          P <- outer(estado, a * estado, function(x, m) dnorm(x, m, sqrt(1 - a^2)))
+          P <- sweep(P, 2, colSums(P), "/")
+          assign(clave, P, envir = transiciones)
+        }
+        posterior <- as.numeric(get(clave, envir = transiciones) %*% posterior)
+      }
+      riesgo <- plogis(eta[i] + obj$sigma * estado)
+      prob[i] <- sum(posterior * riesgo)
+      if (!is.na(d$evento[i])) {
+        posterior <- posterior * if (d$evento[i] == 1L) riesgo else (1 - riesgo)
+        posterior <- posterior / sum(posterior)
+      }
+      masa_bordes <- max(masa_bordes, sum(posterior[c(1L, n_malla)]))
+      anterior <- hoy
+    }
+  }
+  stopifnot(all(is.finite(prob)), all(prob > 0 & prob < 1))
+  if (masa_bordes >= 1e-7)
+    stop(sprintf("Ampliar la malla del filtro: masa en bordes = %.6g", masa_bordes))
+  prob
+}
+```
+
+```{r ajuste-logistica-ar1, cache=TRUE, cache.extra=list(base_cierre, vars_reg, packageVersion("glmmTMB"), body(ajustar_ar1), body(predecir_ar1))}
+ajustes_ar1 <- list()
+control_ar1 <- predicciones_ar1 <- list()
+for (u in c(60, 51)) {
+  d <- base_cierre |> mutate(evento = .data[[paste0("exc_", u)]])
+  referencia <- ajustes_cierre[[paste(u, "Log1p", sep = "_")]]
+  for (fin in c(2023, 2024)) {
+    tr <- d |> filter(anio <= fin)
+    secuencia <- d |> filter(anio <= fin + 1L)
+    obj <- ajustar_ar1(tr, vars_reg)
+    secuencia$prob_ar1 <- predecir_ar1(obj, secuencia)
+    p <- secuencia |> filter(anio == fin + 1L)
+    original <- referencia[[if (fin == 2023) "validacion" else "prueba"]]
+    stopifnot(identical(as.character(p$estacion), as.character(original$estacion)),
+              identical(p$dia, original$dia), identical(p$evento, original$evento))
+    clave <- paste(u, fin, sep = "_")
+    ajustes_ar1[[clave]] <- obj
+    control_ar1[[clave]] <- data.frame(umbral = u, ultimo_anio_ajuste = fin,
+      n_ajuste = nrow(tr), n_evaluacion = nrow(p), phi = obj$phi, sigma_estado = obj$sigma,
+      convergio = obj$modelo$fit$convergence == 0L, hessiano_positivo = obj$modelo$sdr$pdHess,
+      gradiente_max = obj$gradiente)
+    predicciones_ar1[[clave]] <- p |>
+      transmute(umbral = u, estacion, dia, anio, evento,
+                prob_original = original$prob, prob_ar1)
+  }
+}
+control_ar1 <- bind_rows(control_ar1)
+predicciones_ar1 <- bind_rows(predicciones_ar1)
+stopifnot(!anyDuplicated(predicciones_ar1[c("umbral", "estacion", "dia")]))
+knitr::kable(control_ar1, digits = 4)
+```
+
+```{r comparacion-clasificacion-ar1}
+comparacion_ar1 <- estacion_ar1 <- cortes_ar1 <- cambios_ar1 <- list()
+for (u in c(60, 51)) {
+  v <- predicciones_ar1 |> filter(umbral == u, anio == 2024)
+  p <- predicciones_ar1 |> filter(umbral == u, anio == 2025)
+  for (criterio in if (u == 60) c("Balanceada", "F1") else "Balanceada") {
+    cortes <- vapply(c("Original", "AR1"), function(m) {
+      prob <- if (m == "Original") v$prob_original else v$prob_ar1
+      elegir_corte(v$evento, prob, criterio)$corte
+    }, numeric(1))
+    cortes_ar1[[length(cortes_ar1) + 1L]] <- data.frame(umbral = u, criterio,
+      modelo = names(cortes), corte = unname(cortes), anio_seleccion = 2024L)
+    for (m in names(cortes)) {
+      for (a in c(2024, 2025)) {
+        z <- if (a == 2024) v else p
+        z$prob <- if (m == "Original") z$prob_original else z$prob_ar1
+        comparacion_ar1[[length(comparacion_ar1) + 1L]] <-
+          evaluar_clas(z$evento, z$prob, cortes[m], criterio) |>
+          mutate(umbral = u, anio = a, modelo = m)
+        if (a == 2025 && criterio == "Balanceada")
+          estacion_ar1[[length(estacion_ar1) + 1L]] <- z |> group_by(estacion) |>
+            group_modify(~ evaluar_clas(.x$evento, .x$prob, cortes[m], criterio)) |>
+            ungroup() |> mutate(umbral = u, modelo = m)
+      }
+    }
+    b <- as.integer(p$prob_original >= cortes["Original"])
+    t <- as.integer(p$prob_ar1 >= cortes["AR1"])
+    cambios_ar1[[length(cambios_ar1) + 1L]] <- data.frame(umbral = u, criterio,
+      excedencias_recuperadas = sum(p$evento == 1 & b == 0 & t == 1),
+      excedencias_antes_detectadas_ahora_omitidas = sum(p$evento == 1 & b == 1 & t == 0),
+      falsas_alarmas_corregidas = sum(p$evento == 0 & b == 1 & t == 0),
+      falsas_alarmas_nuevas = sum(p$evento == 0 & b == 0 & t == 1))
+  }
+}
+comparacion_ar1 <- bind_rows(comparacion_ar1)
+estacion_ar1 <- bind_rows(estacion_ar1)
+cortes_ar1 <- bind_rows(cortes_ar1)
+cambios_ar1 <- bind_rows(cambios_ar1)
+stopifnot(all(with(comparacion_ar1, VP + VN + FP + FN == dias)),
+          all(with(comparacion_ar1, VP + FN == excedencias)))
+knitr::kable(comparacion_ar1 |> filter(anio == 2025) |>
+  select(umbral, modelo, criterio, corte, dias, sensibilidad, especificidad,
+         precision, FP, FN, exactitud_balanceada), digits = 3)
+knitr::kable(cambios_ar1)
+```
+
+```{r dependencia-predictiva-ar1}
+dependencia_ar1 <- list()
+for (u in c(60, 51)) {
+  for (a in c(2024, 2025)) {
+    for (m in c("Original", "AR1")) {
+      d <- predicciones_ar1 |> filter(umbral == u, anio == a)
+      p <- if (m == "Original") d$prob_original else d$prob_ar1
+      p <- pmin(pmax(p, 1e-8), 1 - 1e-8)
+      d$residuo <- (d$evento - p) / sqrt(p * (1 - p))
+      for (e in unique(as.character(d$estacion))) {
+        z <- d |> filter(estacion == e) |> arrange(dia)
+        for (h in 1:14) {
+          previo <- z$residuo[match(z$dia - h, z$dia)]
+          ok <- complete.cases(z$residuo, previo)
+          rho <- if (sum(ok) >= 3 && sd(z$residuo[ok]) > 0 && sd(previo[ok]) > 0)
+            cor(z$residuo[ok], previo[ok]) else NA_real_
+          dependencia_ar1[[length(dependencia_ar1) + 1L]] <- data.frame(
+            umbral = u, anio = a, modelo = m, estacion = e,
+            rezago = h, pares = sum(ok), correlacion = rho)
+        }
+      }
+    }
+  }
+}
+dependencia_ar1 <- bind_rows(dependencia_ar1)
+resumen_dependencia_ar1 <- dependencia_ar1 |>
+  filter(anio == 2025, rezago %in% c(1, 7)) |>
+  group_by(umbral, modelo, rezago) |>
+  summarise(estaciones = sum(is.finite(correlacion)),
+    mediana_correlacion = median(correlacion, na.rm = TRUE),
+    mediana_absoluta = median(abs(correlacion), na.rm = TRUE), .groups = "drop")
+knitr::kable(resumen_dependencia_ar1, digits = 3)
+```
+
+El diagnóstico compara errores predictivos calculados antes de actualizar el estado del día, sobre las mismas fechas. Una menor dependencia residual no garantiza mejores clasificaciones. Se revisan conjuntamente sensibilidad, precisión, falsas alarmas, omisiones y exactitud balanceada; la mejora agregada tampoco implica mejora en cada estación. NTE sigue sin evaluación en 2025. Los parámetros compartidos y la hipótesis AR(1) son simplificaciones; no se afirma que desaparezca toda la dependencia ni se usan pruebas convencionales que traten los días como independientes.
+
+Referencias metodológicas: [modelo binomial y estructuras de covarianza de glmmTMB](https://glmmtmb.github.io/glmmTMB/reference/glmmTMB.html) y [estructura AR(1), agrupación y días faltantes](https://glmmtmb.github.io/glmmTMB/articles/covstruct.html).
+
+
+## 11. Validación dejando una estación fuera
+
+Se conserva una logística complementaria sin el factor estación, necesaria para predecir en una estación nunca vista. En cada iteración se excluye una estación del ajuste 2021–2023, de la selección del corte con 2024 y del reajuste 2021–2024, y se evalúa en su año 2025. El único criterio de corte es la exactitud balanceada. No se estima ninguna transformación con datos de la estación excluida.
+
+Es una prueba conjunta de transferencia espacial y temporal de esta especificación complementaria. La presión se conserva en unidades originales y puede reflejar altitud. Los resultados agrupados combinan modelos distintos y deben leerse con los resultados por estación; NTE no dispone de casos completos de prueba.
+
+```{r validacion-estacion-fuera}
+pred_loso <- control_loso <- metricas_loso <- list()
+for (u in c(60, 51)) {
+  for (e in sort(unique(as.character(bm$estacion)))) {
+    obj <- ajustar_log_cierre(u, estacion_fuera = e)
+    n <- nrow(obj$prueba)
+    control_loso[[length(control_loso) + 1L]] <- data.frame(
+      umbral = u, estacion = e, n_ajuste = nobs(obj$inicial), n_validacion = nrow(obj$validacion),
+      n_final = nobs(obj$modelo), n_prueba = n, evaluable = n > 0,
+      convergio = obj$inicial$converged && obj$modelo$converged, corte_balanceada = obj$corte)
+    if (!n) next
+    metricas_loso[[length(metricas_loso) + 1L]] <-
+      evaluar_clas(obj$prueba$evento, obj$prueba$prob, obj$corte) |> mutate(umbral = u, estacion = e)
+    pred_loso[[length(pred_loso) + 1L]] <- obj$prueba |>
+      transmute(umbral = u, estacion, dia, observado = evento, probabilidad = prob,
+                criterio = "Balanceada", corte = obj$corte, predicho = as.integer(prob >= corte))
+  }
+}
+control_loso <- bind_rows(control_loso)
+metricas_loso <- bind_rows(metricas_loso)
+pred_loso <- bind_rows(pred_loso)
+metricas_loso_global <- pred_loso |> group_by(umbral, criterio) |>
+  group_modify(~ metricas_clas(.x$observado, .x$predicho, 0.5) |>
+                 mutate(dias = nrow(.x), estaciones = n_distinct(.x$estacion))) |>
+  ungroup() |> select(-corte)
+knitr::kable(control_loso)
+knitr::kable(metricas_loso |> select(umbral, estacion, dias, excedencias, corte, VP, FN, FP, VN,
+               sensibilidad, especificidad, precision, exactitud_balanceada), digits = 3)
+knitr::kable(metricas_loso_global, digits = 3)
+```
+
+## 12. Salidas y pendientes para el informe
+
+Se exportan las tablas, las predicciones del GAM y de la validación espacial, y la información de sesión. Quedan para el informe la interpretación de contribuciones, las conclusiones integradas, las referencias y el contexto geográfico. La amplitud P10–P90 del GAM está en ppb de la respuesta y es descriptiva, no causal. Los días señalados requieren confirmación de SIMA sobre estaciones y fechas.
+
+```{r exportacion-cierre}
+tablas_cierre <- list(revision_calidad = revision_calidad, auditoria_horaria = auditoria_horaria,
+  control_gam = control_gam_cierre, gam_transformaciones = metricas_gam_transformaciones,
+  gam_calidad = metricas_gam_calidad, logistica_general = metricas_log_cierre,
+  logistica_estacion = metricas_log_estacion_cierre, logistica_precision_60 = comparacion_precision,
+  logistica_calidad = comparacion_log_calidad, logistica_dependencia = dependencia_log_cierre,
+  loso_control = control_loso, loso_estacion = metricas_loso, loso_global = metricas_loso_global,
+  ar1_control = control_ar1, ar1_comparacion = comparacion_ar1, ar1_cortes = cortes_ar1,
+  ar1_estacion = estacion_ar1, ar1_dependencia = dependencia_ar1, ar1_cambios = cambios_ar1,
+  ar1_predicciones = predicciones_ar1)
+for (nombre in names(tablas_cierre))
+  write.csv(tablas_cierre[[nombre]], file.path(dir_cierre, paste0(nombre, ".csv")),
+            row.names = FALSE, na = "", fileEncoding = "UTF-8")
+write.csv(pred_gam_cierre, file.path(dir_cierre, "predicciones_gam.csv"), row.names = FALSE, fileEncoding = "UTF-8")
+write.csv(pred_loso, file.path(dir_cierre, "predicciones_loso.csv"), row.names = FALSE, fileEncoding = "UTF-8")
+writeLines(capture.output(sessionInfo()), file.path(dir_cierre, "sesion_R.txt"))
+data.frame(tabla = names(tablas_cierre), filas = vapply(tablas_cierre, nrow, integer(1)))
+```
