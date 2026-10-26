@@ -1902,3 +1902,36 @@ write.csv(pred_loso, file.path(dir_cierre, "predicciones_loso.csv"), row.names =
 writeLines(capture.output(sessionInfo()), file.path(dir_cierre, "sesion_R.txt"))
 data.frame(tabla = names(tablas_cierre), filas = vapply(tablas_cierre, nrow, integer(1)))
 ```
+
+## 13. Revisión final de la retroalimentación de la Etapa 3
+
+Se completa la interpretación de variables en regresión lineal, logística y
+GAMM de CE; se revisa la forma lineal de los predictores en el logit mediante
+curvas cúbicas naturales y evaluación temporal, y se conserva una alternativa
+flexible como comparación. Las curvas y las asociaciones no se interpretan
+como efectos causales. Las comparaciones con datos ya explorados siguen
+siendo exploratorias.
+
+La evaluación adicional usa cortes crecientes para probar 2023, 2024 y 2025,
+con elección del corte de clasificación en el año anterior. La referencia de
+persistencia usa el día calendario previo, y recurre a la frecuencia de
+entrenamiento si falta. Los intervalos remuestrean bloques móviles de siete
+y 14 días, conservando juntas todas las estaciones y las predicciones de
+cada modelo; no incluyen incertidumbre por reajustar sus parámetros.
+
+También se comparan casos completos e incompletos y se revisa la sensibilidad
+de regresión lineal y logística AR(1) a las banderas meteorológicas. En el
+GAMM de CE se aprovecha el reajuste guardado con la regla inicial; el de la
+regla ampliada se omitió por su costo de cálculo. Los nuevos reajustes de
+sensibilidad del GAMM están desactivados por defecto y solo se solicitan
+mediante `options(sima.reajustar_gamm_calidad = TRUE)` antes del complemento.
+Las salidas se escriben en `analisis/salidas/retro_etapa3`. El complemento
+guarda cachés RDS regenerables para evitar repetir cálculos costosos.
+
+```{r complemento-retro-etapa3}
+source(file.path(raiz, "analisis/complemento_retro_etapa3.R"), local = TRUE,
+       encoding = "UTF-8")
+knitr::kable(read.csv(file.path(raiz, "analisis/salidas/retro_etapa3/comparacion_2025_ampliada.csv")), digits = 3)
+knitr::kable(read.csv(file.path(raiz, "analisis/salidas/retro_etapa3/lineal_resumen.csv")), digits = 3)
+knitr::kable(read.csv(file.path(raiz, "analisis/salidas/retro_etapa3/diagnostico_logit.csv")), digits = 3)
+```
