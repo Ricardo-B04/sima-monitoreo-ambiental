@@ -107,7 +107,7 @@ Cada PDF se genera junto a su fuente, como `entregables/entregable4/main.pdf`. P
 
 ## Recursos del informe y organización
 
-R realiza la limpieza, el análisis estadístico y la generación de resultados. LaTeX organiza el informe y sus tablas y figuras. Durante la elaboración se usó Python para preparar recursos y comprobar cifras y archivos; esos auxiliares todavía deben incorporarse al repositorio para documentar también esa parte del proceso. La compilación del TeX con los recursos incluidos no depende de ellos.
+R realiza la limpieza, el análisis estadístico y la generación de resultados. LaTeX organiza el informe y sus tablas y figuras.
 
 El informe final y su código deben conservar la misma versión. Las tablas CSV y los ajustes necesarios para evitar cálculos largos no se publican automáticamente, porque `analisis/salidas/` está ignorada. Al incorporar resultados finales, conviene guardarlos en una carpeta destinada a esos resultados, separada de los cachés y de los archivos de prueba.
 
