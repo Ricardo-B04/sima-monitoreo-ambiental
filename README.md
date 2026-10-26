@@ -1,6 +1,6 @@
 # Proyecto SIMA: monitoreo ambiental de Nuevo León
 
-Proyecto del Equipo 3 sobre el ozono y sus relaciones con los precursores y la meteorología en las estaciones SIMA de la Zona Metropolitana de Monterrey. Incluye la preparación de datos, los análisis en R y los informes en LaTeX de las etapas 1, 2 y 4.
+Proyecto del Equipo 3 sobre el ozono y sus relaciones con los precursores y la meteorología en las estaciones SIMA de la Zona Metropolitana de Monterrey. Incluye la preparación de datos, los análisis en R y los informes en LaTeX de las etapas 1, 2, 3 y 4.
 
 ## Objetivo y alcance final
 
@@ -24,7 +24,7 @@ La clasificación usa variables observadas del mismo día; la logística AR(1) a
 | `analisis/04_modelado y evaluación.Rmd` | PCA, regresión lineal, GAM, GAMM de CE, logística y logística AR(1), junto con las comparaciones y validaciones finales. |
 | `analisis/complemento_retro_etapa3.R` | Complemento llamado por la sección 13 del análisis 04. Interpreta variables, revisa la forma del logit y amplía la validación temporal, la incertidumbre y la revisión de calidad. Necesita los objetos creados por el Rmd; no se ejecuta por separado. |
 | `analisis/salidas/` | HTML, tablas CSV, predicciones, información de sesión y cachés generados localmente. Esta carpeta está ignorada por Git. |
-| `entregables/entregable1/`, `entregable2/`, `entregable4/` | Informes con `main.tex`, `main.pdf` y sus recursos. El Entregable 4 corresponde al informe final. |
+| `entregables/entregable1/`, `entregable2/`, `entregable3/`, `entregable4/` | Informes de las cuatro etapas con `main.tex`, `main.pdf`, imágenes y tablas. El Entregable 3 corresponde al reporte de modelado y evaluación; el 4, al informe final. |
 | `R/` | Scripts para ejecutar los análisis, compilar los informes e inventariar las fuentes. |
 | `investigacion/` | Notas de exploración y [decisiones metodológicas finales](investigacion/decisiones.md). Las notas iniciales se conservan como antecedentes. |
 | `referencias/originales/` | Documentos de ubicación de estaciones y rangos recibidos. |
@@ -101,7 +101,7 @@ Rscript R/compilar_entregables.R
 Rscript R/compilar_entregables.R entregable4
 ```
 
-El script busca `entregables/*/main.tex` y lee la indicación `% !TeX program = ...` de cada archivo. Los Entregables 1 y 2 usan XeLaTeX; el 4 usa pdfLaTeX. Si no hay indicación, se utiliza XeLaTeX. También se admite LuaLaTeX cuando esté indicado en el documento. Una carpeta solicitada sin `main.tex` o una compilación fallida producen un error al terminar.
+El script busca `entregables/*/main.tex` y lee la indicación `% !TeX program = ...` de cada archivo. Los Entregables 1, 2 y 3 usan XeLaTeX; el 4 usa pdfLaTeX. Si no hay indicación, se utiliza XeLaTeX. También se admite LuaLaTeX cuando esté indicado en el documento. Una carpeta solicitada sin `main.tex` o una compilación fallida producen un error al terminar.
 
 Cada PDF se genera junto a su fuente, como `entregables/entregable4/main.pdf`. Para Overleaf se sube el contenido de esa carpeta con sus imágenes y tablas, se selecciona `main.tex` como documento principal y se usa pdfLaTeX. No es necesario volver a ajustar los modelos para compilar el informe con los recursos incluidos. Las fechas de portada deben mantenerse fijas para conservar la fecha de entrega.
 
